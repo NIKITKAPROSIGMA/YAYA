@@ -1,0 +1,862 @@
+-- ФИНАЛЬНЫЙ СКРИПТ (Z КАК В СИСИ.TXT + КРАСНЫЙ ЭКРАН КРИКА + ЗАПУСК АНИМАЦИИ 85012092465916 + ПРОВЕРКА СКИЛЛОВ)
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local Lighting = game:GetService("Lighting")
+local Debris = game:GetService("Debris")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+-- ========== НАСТРОЙКИ Z СКИЛЛА ==========
+local TARGET_ANIM_ID = "140491244934559"
+local NEW_TARGET_ANIM_ID = "85012092465916"   -- анимация, которая запускается при Z
+local PASSIVE_ANIM_ID = "86045680364061"
+local SCREAM_ANIM_ID = "94616006376147"
+local SOUND_ID = "rbxassetid://121778550477948"
+local SKILL_NAME = "Projection"
+local BURST_SOUND_ID = "rbxassetid://125591301596453"
+local SCREAM_SOUND_ID = "rbxassetid://93720495465590"
+
+local Z_COOLDOWN = 8
+local PROJ_COOLDOWN = 8
+local SKILL_DURATION = 2
+
+local isSkillActive = false
+local lastZUse = 0
+local lastSkillEndTime = 0
+local Character, Humanoid, Root, PlayerGui
+local originalFOV = 70
+
+-- ========== АИМ ПЕРЕМЕННЫЕ ==========
+local aimActive = false
+local aimDisabled = false
+local lockedTarget = nil
+local AIM_RADIUS_WORLD = 50
+local AIM_RADIUS_SCREEN = 80
+local lastAnimWasPlaying = false
+local soundPlayed = false
+local screamSoundPlayed = false
+local screamEffectActive = false
+local redFrame = nil
+local redScreenGui = nil
+
+-- ========== ЗАМЕНА АНИМАЦИЙ УДАРА (ГЛОБАЛЬНО) ==========
+local ANIMATION_REPLACEMENTS = {
+    ["101283990868172"] = "108686045412945",
+    ["108708446862011"] = "98783064085844",
+    ["77583711129628"]  = "84080901810314",
+    ["116910683335467"] = "97504088532041",
+    ["97207871642820"]  = "79718433989469",
+}
+
+-- ========== КАСТОМНЫЕ ЗВУКИ УДАРА ==========
+local SoundData = {
+    ["101283990868172"] = "91866472604451",
+    ["108708446862011"] = "91866472604451",
+    ["77583711129628"]  = "102251643592286",
+    ["116910683335467"] = "84357659909229",
+    ["97207871642820"]  = "135168080807081",
+}
+
+-- ========== ПРОВЕРКА НАЛИЧИЯ НУЖНЫХ СКИЛЛОВ (ВЕНГЕРФУЛ И ДОСТУПНОСТЬ Z) ==========
+local ALLOWED_MOVES = {
+    ["Cursory Impact"] = true,
+    ["Time Cell Moon Palace"] = true
+}
+
+local function hasRequiredSkill()
+    local char = Character
+    if not char then return false end
+    local moveset = char:FindFirstChild("Moveset")
+    if not moveset then
+        local playerName = LocalPlayer.Name
+        local characters = workspace:FindFirstChild("Characters")
+        if characters then
+            local playerChar = characters:FindFirstChild(playerName)
+            if playerChar then
+                moveset = playerChar:FindFirstChild("Moveset")
+            end
+        end
+    end
+    if not moveset then return false end
+    for _, move in ipairs(moveset:GetChildren()) do
+        if ALLOWED_MOVES[move.Name] then
+            return true
+        end
+    end
+    return false
+end
+
+-- ========== ПЕРЕХВАТ ПАССИВНОГО ЗВУКА (ГЛОБАЛЬНО) ==========
+local OLD_PASSIVE_SOUND_ID = "99951577218359"
+local NEW_PASSIVE_SOUND_ID = "104119789524388"
+
+local function captureAndReplace(sound)
+    if not sound then return end
+    local soundId = tostring(sound.SoundId)
+    if soundId:find(OLD_PASSIVE_SOUND_ID) then
+        sound.SoundId = "rbxassetid://" .. NEW_PASSIVE_SOUND_ID
+    end
+end
+
+local function watchForSounds(container)
+    container.ChildAdded:Connect(function(child)
+        if child:IsA("Sound") then
+            captureAndReplace(child)
+        else
+            watchForSounds(child)
+        end
+    end)
+    for _, child in ipairs(container:GetChildren()) do
+        if child:IsA("Sound") then
+            captureAndReplace(child)
+        else
+            watchForSounds(child)
+        end
+    end
+end
+watchForSounds(workspace)
+
+-- ========== ЗАМЕНА АНИМАЦИЙ (ГЛОБАЛЬНАЯ) ==========
+local function replaceAnimation(track, humanoid)
+    if not track or not track.Animation or not track.IsPlaying then return end
+    local animId = tostring(track.Animation.AnimationId)
+    for oldId, newId in pairs(ANIMATION_REPLACEMENTS) do
+        if animId:find(oldId) then
+            local currentTime = track.TimePosition
+            local currentSpeed = track.Speed
+            track:Stop()
+            local newAnim = Instance.new("Animation")
+            newAnim.AnimationId = "rbxassetid://" .. newId
+            local newTrack = humanoid:LoadAnimation(newAnim)
+            newTrack:Play()
+            newTrack:AdjustSpeed(currentSpeed)
+            newTrack.TimePosition = math.min(currentTime, newTrack.Length)
+            newTrack.Priority = Enum.AnimationPriority.Action
+            break
+        end
+    end
+end
+
+-- ========== РЕКОЛОР 90,90,200 (ДЛЯ СВОЕГО ПЕРСОНАЖА) ==========
+local TARGET_COLOR = Color3.fromRGB(90, 90, 200)
+
+local function applyRecolorToCharacter(char)
+    if not char then return end
+    for _, obj in ipairs(char:GetDescendants()) do
+        if obj.Name == "CombatTrail" and (obj:IsA("BasePart") or obj:IsA("MeshPart")) then
+            obj.Color = TARGET_COLOR
+        elseif obj.Name == "Trail" and obj:IsA("Trail") then
+            obj.Color = ColorSequence.new(TARGET_COLOR)
+        end
+    end
+end
+
+local function watchMyCharacter()
+    local char = LocalPlayer.Character
+    if not char then return end
+    applyRecolorToCharacter(char)
+    char.DescendantAdded:Connect(function()
+        applyRecolorToCharacter(char)
+    end)
+end
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+    task.wait(0.5)
+    watchMyCharacter()
+end)
+if LocalPlayer.Character then
+    watchMyCharacter()
+end
+
+-- ========== КРАСНЫЙ ЭФФЕКТ И ПРИБЛИЖЕНИЕ FOV (КРИК) ==========
+local function startRedEffect()
+    if screamEffectActive then return end
+    screamEffectActive = true
+
+    redScreenGui = Instance.new("ScreenGui")
+    redScreenGui.Name = "RedEffectGui"
+    redScreenGui.IgnoreGuiInset = true
+    redScreenGui.ResetOnSpawn = false
+    redScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+    redFrame = Instance.new("Frame")
+    redFrame.Size = UDim2.new(1, 0, 1, 0)
+    redFrame.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+    redFrame.BackgroundTransparency = 1
+    redFrame.BorderSizePixel = 0
+    redFrame.Parent = redScreenGui
+
+    TweenService:Create(redFrame, TweenInfo.new(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 0.4}):Play()
+    TweenService:Create(Camera, TweenInfo.new(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {FieldOfView = 40}):Play()
+
+    task.delay(3, function()
+        if redFrame then
+            TweenService:Create(redFrame, TweenInfo.new(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1}):Play()
+            TweenService:Create(Camera, TweenInfo.new(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {FieldOfView = originalFOV}):Play()
+            task.delay(1.8, function()
+                if redScreenGui then redScreenGui:Destroy() end
+                redScreenGui = nil
+                redFrame = nil
+            end)
+        end
+        screamEffectActive = false
+    end)
+end
+
+-- ========== ФУНКЦИЯ ПОИСКА ЦЕЛИ ==========
+local function GetClosestPlayerToCursor()
+    local closest = nil
+    local shortestDist = AIM_RADIUS_SCREEN + 1
+    local cursorPos = UserInputService:GetMouseLocation()
+    local char = Character
+    local myRoot = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso"))
+    if not myRoot then return nil end
+
+    for _, v in pairs(Players:GetPlayers()) do
+        if v ~= LocalPlayer and v.Character then
+            local hum = v.Character:FindFirstChild("Humanoid")
+            if hum and hum.Health > 0 then
+                local part = v.Character:FindFirstChild("HumanoidRootPart") or v.Character:FindFirstChild("Torso")
+                if part then
+                    local worldDist = (myRoot.Position - part.Position).Magnitude
+                    if worldDist <= AIM_RADIUS_WORLD then
+                        local pos, onScreen = Camera:WorldToViewportPoint(part.Position)
+                        if onScreen then
+                            local distToCursor = (Vector2.new(pos.X, pos.Y) - cursorPos).Magnitude
+                            if distToCursor < shortestDist then
+                                closest = part
+                                shortestDist = distToCursor
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if obj:IsA("Model") and obj ~= Character then
+            local hum = obj:FindFirstChild("Humanoid")
+            if hum and hum.Health > 0 then
+                local part = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Torso")
+                if part then
+                    local worldDist = (myRoot.Position - part.Position).Magnitude
+                    if worldDist <= AIM_RADIUS_WORLD then
+                        local pos, onScreen = Camera:WorldToViewportPoint(part.Position)
+                        if onScreen then
+                            local distToCursor = (Vector2.new(pos.X, pos.Y) - cursorPos).Magnitude
+                            if distToCursor < shortestDist then
+                                closest = part
+                                shortestDist = distToCursor
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return closest
+end
+
+-- ========== АИМ ==========
+RunService.RenderStepped:Connect(function()
+    if aimActive and lockedTarget then
+        local targetParent = lockedTarget.Parent
+        if targetParent and targetParent:FindFirstChild("Humanoid") and targetParent.Humanoid.Health > 0 then
+            Camera.CFrame = CFrame.new(Camera.CFrame.Position, lockedTarget.Position)
+        else
+            aimActive = false
+            lockedTarget = nil
+        end
+    end
+end)
+
+-- GUI переменные
+local targetButton = nil
+local skillObj = nil
+local cachedDustSource = nil
+local cachedEnergySource = nil
+local globalCC = nil
+globalCC = Instance.new("ColorCorrectionEffect", Lighting)
+globalCC.Name = "SkillColorCorrection"
+globalCC.Enabled = false
+
+-- ========== ПОЛУЧЕНИЕ ОБЪЕКТА СКИЛЛА ==========
+local function getSkillObj()
+    local playerName = LocalPlayer.Name
+    local characters = workspace:FindFirstChild("Characters")
+    if not characters then return nil end
+    local playerChar = characters:FindFirstChild(playerName)
+    if not playerChar then return nil end
+    local moveset = playerChar:FindFirstChild("Moveset")
+    if not moveset then return nil end
+    local obj = moveset:FindFirstChild(SKILL_NAME)
+    if not obj then
+        obj = Instance.new("NumberValue")
+        obj.Name = SKILL_NAME
+        obj.Value = PROJ_COOLDOWN
+        obj.Parent = moveset
+        obj:SetAttribute("Key", 5)
+        obj:SetAttribute("LastUse", 0)
+    end
+    return obj
+end
+
+-- ========== НАСТРОЙКА GUI ==========
+local function setupGui()
+    if not PlayerGui then PlayerGui = LocalPlayer:WaitForChild("PlayerGui") end
+    for _, v in ipairs(PlayerGui:GetDescendants()) do
+        if v:IsA("GuiObject") and v.Name == SKILL_NAME then
+            targetButton = v
+            local hotkeyLabel = v:FindFirstChildOfClass("TextLabel") or v:FindFirstChild("Hotkey") or v:FindFirstChild("Key")
+            if hotkeyLabel then hotkeyLabel.Text = "Z" end
+            break
+        end
+    end
+end
+
+-- ========== ИНИЦИАЛИЗАЦИЯ ==========
+local function InitVariables()
+    Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    Humanoid = Character:WaitForChild("Humanoid")
+    Root = Character:WaitForChild("HumanoidRootPart")
+    PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+    skillObj = getSkillObj()
+    setupGui()
+end
+
+-- ========== РЕСЕТ ПОСЛЕ СМЕРТИ ==========
+local function onRespawn()
+    task.wait(0.5)
+    Character = LocalPlayer.Character
+    if Character then
+        Humanoid = Character:FindFirstChild("Humanoid")
+        Root = Character:FindFirstChild("HumanoidRootPart")
+    end
+    skillObj = getSkillObj()
+    setupGui()
+    isSkillActive = false
+    lastZUse = 0
+    lastSkillEndTime = 0
+    globalCC.Enabled = false
+    Camera.FieldOfView = originalFOV
+    aimActive = false
+    aimDisabled = false
+    lockedTarget = nil
+    lastAnimWasPlaying = false
+    soundPlayed = false
+    screamSoundPlayed = false
+    screamEffectActive = false
+    if redScreenGui then redScreenGui:Destroy() end
+    redScreenGui = nil
+    redFrame = nil
+end
+
+LocalPlayer.CharacterAdded:Connect(onRespawn)
+InitVariables()
+
+-- ========== ПРОВЕРКА Z (РАЗРЕШАЕТ ОСНОВНУЮ И ВСПОМОГАТЕЛЬНУЮ АНИМАЦИИ) ==========
+local function checkZStrict()
+    if not Humanoid then return false end
+    local tracks = Humanoid:GetPlayingAnimationTracks()
+    local mainFound = false
+    for _, track in ipairs(tracks) do
+        local id = tostring(track.Animation.AnimationId)
+        if id:find(TARGET_ANIM_ID) or id:find(NEW_TARGET_ANIM_ID) then
+            mainFound = true
+        elseif track.Priority == Enum.AnimationPriority.Action or track.Priority == Enum.AnimationPriority.Action2 then
+            return false
+        end
+    end
+    return mainFound
+end
+
+-- ========== ЗАПУСК ВСПОМОГАТЕЛЬНОЙ АНИМАЦИИ ==========
+local function startSecondaryAnim()
+    if not Humanoid then return end
+    local anim = Instance.new("Animation")
+    anim.AnimationId = "rbxassetid://" .. NEW_TARGET_ANIM_ID
+    local track = Humanoid:LoadAnimation(anim)
+    track:Play()
+    return track
+end
+
+-- === ФАНТОМЫ ===
+local function createTrailPhantom()
+    if not Character then return end
+    local model = Instance.new("Model", workspace)
+    local partsList = {"Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg"}
+    local parts = {}
+    for _, name in ipairs(partsList) do
+        local original = Character:FindFirstChild(name)
+        if original and original:IsA("BasePart") then
+            local clone = original:Clone()
+            clone:ClearAllChildren()
+            clone.CanCollide = false
+            clone.Anchored = true
+            clone.Material = Enum.Material.SmoothPlastic
+            clone.Color = Color3.fromRGB(120, 120, 255)
+            clone.Transparency = 0.6
+            clone.CFrame = original.CFrame
+            clone.Parent = model
+            table.insert(parts, clone)
+        end
+    end
+    task.spawn(function()
+        for _, part in ipairs(parts) do
+            TweenService:Create(part, TweenInfo.new(0.5, Enum.EasingStyle.Linear), {Transparency = 1}):Play()
+        end
+        task.wait(0.5)
+        model:Destroy()
+    end)
+end
+
+local function smallActivationEffect()
+    if not Character then return end
+    local torso = Character:FindFirstChild("Torso")
+    if not torso then return end
+    local flash = Instance.new("Part")
+    flash.Size = Vector3.new(1.5, 1.5, 1.5)
+    flash.Shape = Enum.PartType.Ball
+    flash.CFrame = torso.CFrame
+    flash.Anchored = true
+    flash.CanCollide = false
+    flash.Material = Enum.Material.Neon
+    flash.Color = Color3.fromRGB(120, 120, 255)
+    flash.Transparency = 0.5
+    flash.Parent = workspace
+    Debris:AddItem(flash, 0.3)
+    TweenService:Create(flash, TweenInfo.new(0.2), {Size = Vector3.new(2.5, 2.5, 2.5), Transparency = 1}):Play()
+    for i = 1, 3 do
+        local particle = Instance.new("Part")
+        particle.Size = Vector3.new(0.2, 0.2, 0.2)
+        particle.Shape = Enum.PartType.Ball
+        particle.CFrame = torso.CFrame
+        particle.Anchored = true
+        particle.CanCollide = false
+        particle.Material = Enum.Material.Neon
+        particle.Color = Color3.fromRGB(120, 120, 255)
+        particle.Transparency = 0.4
+        particle.Parent = workspace
+        local direction = Vector3.new(math.random(-25,25)/10, math.random(0,10)/10, math.random(-25,25)/10).Unit
+        TweenService:Create(particle, TweenInfo.new(0.3), {CFrame = torso.CFrame + direction * math.random(1.5,3)}):Play()
+        TweenService:Create(particle, TweenInfo.new(0.3), {Transparency = 1}):Play()
+        Debris:AddItem(particle, 0.3)
+    end
+end
+
+-- === Z СКИЛЛ ==========
+local function runZSkill()
+    -- Проверка: есть ли нужные скиллы
+    if not hasRequiredSkill() then return end
+    if tick() - lastZUse < Z_COOLDOWN then return end
+    if isSkillActive then return end
+    if not checkZStrict() then return end
+
+    lastZUse = tick()
+    isSkillActive = true
+    aimDisabled = false
+    aimActive = false
+    lockedTarget = nil
+    if skillObj then skillObj:SetAttribute("LastUse", tick()) end
+
+    smallActivationEffect()
+    -- Запускаем вспомогательную анимацию (она не прерывает скилл)
+    local secondaryTrack = startSecondaryAnim()
+
+    local originalSpeed = Humanoid.WalkSpeed
+    local startTime = tick()
+
+    globalCC.Enabled = true
+    globalCC.TintColor = Color3.fromRGB(200, 200, 255)
+    globalCC.Saturation = 1.1
+    local s = Instance.new("Sound", Root)
+    s.SoundId = SOUND_ID
+    s:Play()
+    Debris:AddItem(s, 3)
+    Camera.FieldOfView = 100
+
+    if not cachedDustSource then
+        cachedDustSource = ReplicatedStorage.Utils.Gojo.Teleport.Floor.Dust
+    end
+
+    local lastPhantomTime = 0
+    local lastWindTime = 0
+
+    while isSkillActive and tick() - startTime < SKILL_DURATION do
+        if not Character or not Humanoid or not Root then break end
+        if not checkZStrict() or Root.Velocity.Magnitude < 8 then break end
+
+        Humanoid.WalkSpeed = 50
+        if Camera.FieldOfView ~= 100 then Camera.FieldOfView = 100 end
+
+        if tick() - lastPhantomTime >= 0.1 then
+            createTrailPhantom()
+            lastPhantomTime = tick()
+        end
+
+        if tick() - lastWindTime >= 0.15 then
+            local torso = Character:FindFirstChild("Torso")
+            if torso and cachedDustSource then
+                local clone = cachedDustSource:Clone()
+                local at = Instance.new("Attachment", torso)
+                clone.Parent = at
+                local function activate(obj)
+                    if obj:IsA("ParticleEmitter") then
+                        obj.Enabled = true
+                        obj:Emit(2)
+                    end
+                    for _, child in ipairs(obj:GetChildren()) do activate(child) end
+                end
+                activate(clone)
+                Debris:AddItem(at, 0.2)
+            end
+            lastWindTime = tick()
+        end
+
+        task.wait()
+    end
+
+    lastSkillEndTime = tick()
+    isSkillActive = false
+    if secondaryTrack and secondaryTrack.IsPlaying then secondaryTrack:Stop() end
+
+    TweenService:Create(Camera, TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {FieldOfView = originalFOV}):Play()
+    TweenService:Create(globalCC, TweenInfo.new(0.5), {Saturation = 0, TintColor = Color3.fromRGB(255,255,255)}):Play()
+    task.delay(0.6, function() globalCC.Enabled = false end)
+
+    if Humanoid then
+        Humanoid.WalkSpeed = originalSpeed
+    end
+end
+
+-- ========== ПАССИВКА (ИЗ СИСИ.TXT) ==========
+local lastPassiveFrame = 0
+RunService.Heartbeat:Connect(function()
+    if isSkillActive or not Humanoid then return end
+    lastPassiveFrame = lastPassiveFrame + 1
+    if lastPassiveFrame % 3 ~= 0 then return end
+    local animPlaying = false
+    for _, track in ipairs(Humanoid:GetPlayingAnimationTracks()) do
+        if track.Animation and tostring(track.Animation.AnimationId):find(PASSIVE_ANIM_ID) then
+            animPlaying = true
+            local pos = track.TimePosition
+            if pos >= 3.0 and pos <= 5.0 then
+                track.TimePosition = 6.0
+                pos = 6.0
+                if aimActive then
+                    aimActive = false
+                    aimDisabled = true
+                    lockedTarget = nil
+                end
+                if not soundPlayed then
+                    soundPlayed = true
+                    local burstSound = Instance.new("Sound", Root)
+                    burstSound.SoundId = BURST_SOUND_ID
+                    burstSound.Volume = 1
+                    burstSound:Play()
+                    Debris:AddItem(burstSound, 3)
+                end
+            end
+            if pos >= 6.0 and pos < 8.0 then
+                if not cachedEnergySource then
+                    cachedEnergySource = ReplicatedStorage.Utils.MeiMei.BirdStrikeAOE.EnergyBurst
+                end
+                if lastPassiveFrame % 6 == 0 then
+                    local arm = Character and Character:FindFirstChild("Right Arm")
+                    if arm and cachedEnergySource then
+                        local clone = cachedEnergySource:Clone()
+                        local at = Instance.new("Attachment", arm)
+                        at.Position = Vector3.new(0, -0.98, 0)
+                        clone.Parent = at
+                        local function applyB(obj)
+                            if obj:IsA("ParticleEmitter") then
+                                obj.Color = ColorSequence.new(Color3.fromRGB(120, 120, 255))
+                                local kps = {}
+                                for _, kp in ipairs(obj.Size.Keypoints) do
+                                    table.insert(kps, NumberSequenceKeypoint.new(kp.Time, kp.Value * 0.15))
+                                end
+                                obj.Size = NumberSequence.new(kps)
+                                obj.Enabled = true
+                                obj:Emit(2)
+                            end
+                            for _, c in ipairs(obj:GetChildren()) do applyB(c) end
+                        end
+                        applyB(clone)
+                        Debris:AddItem(at, 0.1)
+                    end
+                end
+            end
+            if pos >= 8.1 then
+                Camera.FieldOfView = math.lerp(Camera.FieldOfView, 50, 0.15)
+            else
+                Camera.FieldOfView = math.lerp(Camera.FieldOfView, 60, 0.15)
+            end
+            break
+        end
+    end
+    if not animPlaying and lastAnimWasPlaying then
+        aimActive = false
+        aimDisabled = false
+        lockedTarget = nil
+        soundPlayed = false
+        TweenService:Create(Camera, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {FieldOfView = originalFOV}):Play()
+    end
+    lastAnimWasPlaying = animPlaying
+end)
+
+-- ========== КРИК (КРАСНЫЙ ЭКРАН + ЗВУК) ==========
+RunService.Heartbeat:Connect(function()
+    local char = Character
+    local hum = char and char:FindFirstChild("Humanoid")
+    if not hum then return end
+    for _, track in ipairs(hum:GetPlayingAnimationTracks()) do
+        if track.Animation and tostring(track.Animation.AnimationId):find(SCREAM_ANIM_ID) and track.IsPlaying then
+            if track.TimePosition >= 1.2 and not screamSoundPlayed then
+                screamSoundPlayed = true
+                local screamSound = Instance.new("Sound", Root)
+                screamSound.SoundId = SCREAM_SOUND_ID
+                screamSound.Volume = 1
+                screamSound:Play()
+                Debris:AddItem(screamSound, 5)
+                startRedEffect()
+            end
+            break
+        end
+    end
+end)
+
+-- ========== ЗАМЕНА АНИМАЦИЙ УДАРА (ГЛОБАЛЬНАЯ) ==========
+RunService.Heartbeat:Connect(function()
+    for _, plr in pairs(Players:GetPlayers()) do
+        local char = plr.Character
+        if char then
+            local humanoid = char:FindFirstChild("Humanoid")
+            if humanoid then
+                for _, track in ipairs(humanoid:GetPlayingAnimationTracks()) do
+                    if track.IsPlaying then
+                        replaceAnimation(track, humanoid)
+                    end
+                end
+            end
+        end
+    end
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if obj:IsA("Model") and obj ~= Character then
+            local humanoid = obj:FindFirstChild("Humanoid")
+            if humanoid then
+                for _, track in ipairs(humanoid:GetPlayingAnimationTracks()) do
+                    if track.IsPlaying then
+                        replaceAnimation(track, humanoid)
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- ========== КАСТОМНЫЕ ЗВУКИ ПРИ ВАШИХ ПОПАДАНИЯХ ==========
+local IsAttacking = false
+local CurrentSkill = ""
+
+local function playLocal(sid)
+    local s = Instance.new("Sound")
+    s.SoundId = "rbxassetid://" .. sid
+    s.Volume = 0.8
+    s.Parent = LocalPlayer:WaitForChild("PlayerGui")
+    if not s.IsLoaded then s.Loaded:Wait() end
+    s:Play()
+    s.Ended:Connect(function() s:Destroy() end)
+    Debris:AddItem(s, 5)
+end
+
+local function setupHitDetector(char)
+    local hum = char:WaitForChild("Humanoid")
+    hum.AnimationPlayed:Connect(function(track)
+        local id = track.Animation.AnimationId:gsub("rbxassetid://", "")
+        if SoundData[id] then
+            local window = (id == "77583711129628" or id == "116910683335467" or id == "97207871642820") and 1.5 or 0.8
+            IsAttacking = true
+            CurrentSkill = id
+            task.delay(window, function()
+                if CurrentSkill == id then
+                    IsAttacking = false
+                end
+            end)
+        end
+    end)
+end
+
+local function onCharacterAdded(char)
+    task.wait(0.5)
+    setupHitDetector(char)
+end
+
+local remotePath = ReplicatedStorage:FindFirstChild("Knit")
+if remotePath then remotePath = remotePath:FindFirstChild("Knit") end
+if remotePath then remotePath = remotePath:FindFirstChild("Services") end
+if remotePath then remotePath = remotePath:FindFirstChild("NaoyaService") end
+if remotePath then remotePath = remotePath:FindFirstChild("RE") end
+if remotePath then remotePath = remotePath:FindFirstChild("Effects") end
+
+if remotePath and remotePath:IsA("RemoteEvent") then
+    remotePath.OnClientEvent:Connect(function(...)
+        local args = {...}
+        if IsAttacking and (args[1] == "Hit" or args[1] == "Damage") then
+            local sid = SoundData[CurrentSkill]
+            if sid then
+                playLocal(sid)
+            end
+        end
+    end)
+else
+    warn("NaoyaService.Effects не найден, звуки удара не будут работать")
+end
+
+if LocalPlayer.Character then
+    setupHitDetector(LocalPlayer.Character)
+end
+LocalPlayer.CharacterAdded:Connect(onCharacterAdded)
+
+-- ========== АИМ ТРЕКЕР ==========
+RunService.Heartbeat:Connect(function()
+    local char = Character
+    local hum = char and char:FindFirstChild("Humanoid")
+    if not hum then return end
+    for _, track in ipairs(hum:GetPlayingAnimationTracks()) do
+        if track.Animation and tostring(track.Animation.AnimationId):find(PASSIVE_ANIM_ID) then
+            local currentPos = track.TimePosition
+            local now = tick()
+            local zWasActive = (now - lastZUse) <= 0.1 or (now - lastSkillEndTime) <= 0.1 or isSkillActive
+            if zWasActive and not aimDisabled then
+                if currentPos < 6.0 or currentPos > 6.5 then
+                    if not aimActive and not lockedTarget then
+                        lockedTarget = GetClosestPlayerToCursor()
+                        if lockedTarget then aimActive = true end
+                    end
+                else
+                    if aimActive then
+                        aimActive = false
+                        aimDisabled = true
+                        lockedTarget = nil
+                    end
+                end
+            end
+            break
+        end
+    end
+end)
+
+-- ========== GUI ОБНОВЛЕНИЕ (КД + СКРЫТИЕ КНОПКИ ЕСЛИ НЕТ СКИЛЛОВ) ==========
+task.spawn(function()
+    while task.wait(0.05) do
+        if not skillObj then skillObj = getSkillObj() end
+        if not targetButton then setupGui() end
+        local hasSkill = hasRequiredSkill()
+        if skillObj and targetButton then
+            if hasSkill then
+                targetButton.Visible = true
+                local lastUse = skillObj:GetAttribute("LastUse") or 0
+                local progress = math.clamp(1 - ((tick() - lastUse) / PROJ_COOLDOWN), 0, 1)
+                local bar = targetButton:FindFirstChild("Cooldown") or targetButton:FindFirstChild("Progress")
+                if bar then
+                    bar.Visible = progress > 0
+                    bar.Size = UDim2.new(1, 0, progress, 0)
+                end
+                if progress > 0 then
+                    targetButton.Active = false
+                    targetButton.Selectable = false
+                else
+                    targetButton.Active = true
+                    targetButton.Selectable = true
+                end
+            else
+                targetButton.Visible = false
+            end
+        end
+    end
+end)
+
+-- ========== ВЕНГЕРФУЛ ВИЗУАЛ (Vengeful Spirit) ==========
+local vengerfulGradients = {}
+task.spawn(function()
+    while true do
+        local char = Character
+        local moveset = char and char:FindFirstChild("Moveset")
+        if not moveset then
+            local playerName = LocalPlayer.Name
+            local characters = workspace:FindFirstChild("Characters")
+            if characters then
+                local playerChar = characters:FindFirstChild(playerName)
+                if playerChar then
+                    moveset = playerChar:FindFirstChild("Moveset")
+                end
+            end
+        end
+        local hasSkill = false
+        if moveset then
+            for _, move in ipairs(moveset:GetChildren()) do
+                if ALLOWED_MOVES[move.Name] then
+                    hasSkill = true
+                    break
+                end
+            end
+        end
+        local pGui = LocalPlayer:FindFirstChild("PlayerGui")
+        local ult = pGui and pGui:FindFirstChild("Main") and pGui.Main:FindFirstChild("Ultimate")
+        if ult then
+            local components = {ult:FindFirstChild("Bar"), ult:FindFirstChild("Special")}
+            for _, parent in pairs(components) do
+                if parent then
+                    for _, child in ipairs(parent:GetChildren()) do
+                        if child.Name == "Fill" or child.Name == "Fill2" then
+                            local grad = child:FindFirstChildOfClass("UIGradient")
+                            if grad then
+                                if hasSkill then
+                                    if not vengerfulGradients[child] then
+                                        vengerfulGradients[child] = grad.Color
+                                    end
+                                    child.BackgroundColor3 = Color3.new(1, 1, 1)
+                                    grad.Color = ColorSequence.new(Color3.fromRGB(120, 120, 255), Color3.fromRGB(80, 80, 200))
+                                    grad.Enabled = true
+                                else
+                                    if vengerfulGradients[child] then
+                                        grad.Color = vengerfulGradients[child]
+                                        vengerfulGradients[child] = nil
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            local title = ult:FindFirstChild("Title")
+            if title and title:IsA("TextLabel") then
+                if hasSkill then
+                    title.Text = "Vengeful Spirit"
+                else
+                    if title.Text == "Vengeful Spirit" then
+                        title.Text = ""
+                    end
+                end
+            end
+        end
+        task.wait(1)
+    end
+end)
+
+-- ========== АКТИВАЦИЯ ПО Z ==========
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if isSkillActive then return end
+    if input.KeyCode == Enum.KeyCode.Z then
+        runZSkill()
+    end
+end)
+
+print("LOADED")
