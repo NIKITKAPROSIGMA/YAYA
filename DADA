@@ -1,862 +1,1452 @@
--- ФИНАЛЬНЫЙ СКРИПТ (Z КАК В СИСИ.TXT + КРАСНЫЙ ЭКРАН КРИКА + ЗАПУСК АНИМАЦИИ 85012092465916 + ПРОВЕРКА СКИЛЛОВ)
-
 local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
-local Lighting = game:GetService("Lighting")
+local ContextActionService = game:GetService("ContextActionService")
+local UserInputService = game:GetService("UserInputService")
 local Debris = game:GetService("Debris")
+local TweenService = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
 local LocalPlayer = Players.LocalPlayer
+local pgui = LocalPlayer:WaitForChild("PlayerGui")
 local Camera = workspace.CurrentCamera
+local Mouse = LocalPlayer:GetMouse()
 
--- ========== НАСТРОЙКИ Z СКИЛЛА ==========
-local TARGET_ANIM_ID = "140491244934559"
-local NEW_TARGET_ANIM_ID = "85012092465916"   -- анимация, которая запускается при Z
-local PASSIVE_ANIM_ID = "86045680364061"
-local SCREAM_ANIM_ID = "94616006376147"
-local SOUND_ID = "rbxassetid://121778550477948"
-local SKILL_NAME = "Projection"
-local BURST_SOUND_ID = "rbxassetid://125591301596453"
-local SCREAM_SOUND_ID = "rbxassetid://93720495465590"
-
-local Z_COOLDOWN = 8
-local PROJ_COOLDOWN = 8
-local SKILL_DURATION = 2
-
-local isSkillActive = false
-local lastZUse = 0
-local lastSkillEndTime = 0
-local Character, Humanoid, Root, PlayerGui
-local originalFOV = 70
-
--- ========== АИМ ПЕРЕМЕННЫЕ ==========
-local aimActive = false
-local aimDisabled = false
-local lockedTarget = nil
-local AIM_RADIUS_WORLD = 50
-local AIM_RADIUS_SCREEN = 80
-local lastAnimWasPlaying = false
-local soundPlayed = false
-local screamSoundPlayed = false
-local screamEffectActive = false
-local redFrame = nil
-local redScreenGui = nil
-
--- ========== ЗАМЕНА АНИМАЦИЙ УДАРА (ГЛОБАЛЬНО) ==========
-local ANIMATION_REPLACEMENTS = {
-    ["101283990868172"] = "108686045412945",
-    ["108708446862011"] = "98783064085844",
-    ["77583711129628"]  = "84080901810314",
-    ["116910683335467"] = "97504088532041",
-    ["97207871642820"]  = "79718433989469",
+local GARUDA_CONFIG = {
+    MeshId = "rbxassetid://123713349501705",
+    TextureId = "rbxassetid://95325238460371",
+    Scale = Vector3.new(1.2, 1.2, 1.2),
+    DetectionRadius = 3,
+    BuffAmount = 18,
+    BaseSpeed = 16,
+    StopFlags = { "Stun", "InSkill", "NoSprint", "ItadoriCancel", "SmallStun", "Action", "Attacking", "Block" },
 }
 
--- ========== КАСТОМНЫЕ ЗВУКИ УДАРА ==========
-local SoundData = {
-    ["101283990868172"] = "91866472604451",
-    ["108708446862011"] = "91866472604451",
-    ["77583711129628"]  = "102251643592286",
-    ["116910683335467"] = "84357659909229",
-    ["97207871642820"]  = "135168080807081",
+local ELECTRIC_GARUDA = {
+    Path = "ReplicatedStorage.Utils.Megumi.NueShock.Electric",
+    Color = Color3.fromRGB(232, 40, 231), -- изменено
+    Rate = 60,
+    SizeMult = 1,
+    SpeedMult = 1,
+    Copies = 3,
+    Offset = Vector3.new(0, 0, 0),
+    Rotation = Vector3.new(0, 0, 0)
 }
 
--- ========== ПРОВЕРКА НАЛИЧИЯ НУЖНЫХ СКИЛЛОВ (ВЕНГЕРФУЛ И ДОСТУПНОСТЬ Z) ==========
-local ALLOWED_MOVES = {
-    ["Cursory Impact"] = true,
-    ["Time Cell Moon Palace"] = true
+local SWING = { Original = "3755636825", New = "136200956329896", Volume = 0.6 }
+local FIST = { Original = "4571259077", New = "140309071002261", Volume = 1.2 }
+
+local IDLE_CONFIG = {
+    IdleAnim = "rbxassetid://129715807085749",
+    BlockAnim = "rbxassetid://106012061894372",
+    TargetTime = 3.6,
+    Delay = 0.2
 }
 
-local function hasRequiredSkill()
-    local char = Character
-    if not char then return false end
-    local moveset = char:FindFirstChild("Moveset")
-    if not moveset then
-        local playerName = LocalPlayer.Name
-        local characters = workspace:FindFirstChild("Characters")
-        if characters then
-            local playerChar = characters:FindFirstChild(playerName)
-            if playerChar then
-                moveset = playerChar:FindFirstChild("Moveset")
-            end
-        end
-    end
-    if not moveset then return false end
-    for _, move in ipairs(moveset:GetChildren()) do
-        if ALLOWED_MOVES[move.Name] then
-            return true
-        end
-    end
-    return false
-end
+local ULT_CONFIG = {
+    MovesMap = {
+        ["Garuda Rebound"] = "Nyoi Staff",
+        ["Rising Rage"]    = "Thunder Kick",
+        ["Mass Breaker"]   = "Charge",
+        ["Garuda Stab"]    = "Uppercut"
+    },
+    SoundReplace = {
+        ["137050048462822"] = "135895192563038",
+        ["75191661535842"]  = "98084023171542",
+        ["139253346216202"] = "87517557827169"
+    },
+    EffectPath = "ReplicatedStorage.Utils.Megumi.NueShock.Electric",
+    EffectColor = Color3.fromRGB(232, 40, 231), -- изменено
+    EffectRate = 30,
+    AnimId = "rbxassetid://76058065825374",
+    TargetUltTitle = "Unrestricted Density",
+    NewUltTitle = "The God of Lightning",
+    LightningColor = Color3.fromRGB(232, 40, 231) -- изменено
+}
 
--- ========== ПЕРЕХВАТ ПАССИВНОГО ЗВУКА (ГЛОБАЛЬНО) ==========
-local OLD_PASSIVE_SOUND_ID = "99951577218359"
-local NEW_PASSIVE_SOUND_ID = "104119789524388"
+local AnimDataVisible = {  
+    ["rbxassetid://113963875117859"] = "rbxassetid://113963875117859",
+    ["rbxassetid://72575786212990"] = "rbxassetid://133447840605824",
+    ["rbxassetid://119248903710146"] = "rbxassetid://106282708121342",
+    ["rbxassetid://123168328205349"] = "rbxassetid://84442064935420",
+    ["rbxassetid://92966188946988"] = "rbxassetid://84989753395518",
+    ["rbxassetid://115586282387431"] = "rbxassetid://96433049733325",
+    ["rbxassetid://140491244934559"] = "rbxassetid://85012092465916",
+}
+local AnimDataInvisible = {
+    ["rbxassetid://113963875117859"] = "rbxassetid://113963875117859",
+    ["rbxassetid://72575786212990"] = "rbxassetid://133447840605824",
+    ["rbxassetid://119248903710146"] = "rbxassetid://106282708121342",
+    ["rbxassetid://123168328205349"] = "rbxassetid://79718433989469",
+    ["rbxassetid://92966188946988"] = "rbxassetid://87792276744794",
+    ["rbxassetid://115586282387431"] = "rbxassetid://134243365075812",
+    ["rbxassetid://140491244934559"] = "rbxassetid://85012092465916",
+}
 
-local function captureAndReplace(sound)
-    if not sound then return end
-    local soundId = tostring(sound.SoundId)
-    if soundId:find(OLD_PASSIVE_SOUND_ID) then
-        sound.SoundId = "rbxassetid://" .. NEW_PASSIVE_SOUND_ID
-    end
-end
+local EXTRA_CONFIG = {
+    TargetAnimId = "104793932628579",
+    MainPath = "ReplicatedStorage.Utils.Megumi.NueShock.Electric",
+    MechamaruPath = "ReplicatedStorage.Utils.Mechamaru.Detonate.Lightning",
+    ExtraPaths = {
+        "ReplicatedStorage.Utils.Nanami.RatioBreaker.Attack1.BlackFlash.BlackFlash.Black.Attachment.Attachment.Lightning 2",
+        "ReplicatedStorage.Utils.Nanami.RatioBreaker.Attack3.Slam.Slam.Black.Attachment.Attachment.BrightLightning"
+    },
+    ReplacementPath = "ReplicatedStorage.Utils.Nanami.RatioBreaker.Attack1.BlackFlash.BlackFlash.Black.Attachment.Attachment.BrightLightning",
+    Color = Color3.fromRGB(232, 40, 231), -- изменено
+    MechamaruColor = Color3.fromRGB(232, 40, 231), -- изменено
+    Electric = { Rate = 100, ExtraRate = 50, Brightness = 3, Offset = Vector3.new(0, -13, 0) },
+    StartPhase = { Rate = 10, Brightness = 10, Offset = Vector3.new(0, 0, 0) },
+    HandReplacement = { Rate = 100, Speed = 1, Size = 0.1, Offset = Vector3.new(0, -0.5, 0) },
+    PhaseStart = { Start = 0, End = 0.65, Part = "HumanoidRootPart" },
+    Phase1 = { Start = 0.65, End = 0.95, Part = "Right Arm" },
+    Phase2 = { Start = 2.68, End = 3.15, Part = "Left Leg" }
+}
 
-local function watchForSounds(container)
-    container.ChildAdded:Connect(function(child)
-        if child:IsA("Sound") then
-            captureAndReplace(child)
-        else
-            watchForSounds(child)
-        end
-    end)
-    for _, child in ipairs(container:GetChildren()) do
-        if child:IsA("Sound") then
-            captureAndReplace(child)
-        else
-            watchForSounds(child)
-        end
-    end
-end
-watchForSounds(workspace)
+local BLINK_CONFIG = {
+    AnimId = "94347210073500",
+    TriggerDist = 14,
+    MaxBlink = 15,
+    PushSpeed = 30,
+    BlinkSoundId = "rbxassetid://136442325826478",
+    EffectDuration = 0.2,
+    TeleportTimings = {0.30, 0.90},
+    LegFxStart = 4.70,
+    LegFxEnd = 5.55,
+    TargetChargeId = "rbxassetid://126216905119949",
+    NewChargeId = "rbxassetid://78054547015152",
+    NewSwingId = "rbxassetid://119556501266993",
+    RingPath = "ReplicatedStorage.Utils.Itadori.CounterHit.Feint.Ring",
+    ElecPath = "ReplicatedStorage.Utils.Megumi.NueShock.Electric",
+    ColorBlue = Color3.fromRGB(232, 40, 231), -- изменено
+    ColorPink = Color3.fromRGB(232, 40, 231) -- изменено
+}
 
--- ========== ЗАМЕНА АНИМАЦИЙ (ГЛОБАЛЬНАЯ) ==========
-local function replaceAnimation(track, humanoid)
-    if not track or not track.Animation or not track.IsPlaying then return end
-    local animId = tostring(track.Animation.AnimationId)
-    for oldId, newId in pairs(ANIMATION_REPLACEMENTS) do
-        if animId:find(oldId) then
-            local currentTime = track.TimePosition
-            local currentSpeed = track.Speed
-            track:Stop()
-            local newAnim = Instance.new("Animation")
-            newAnim.AnimationId = "rbxassetid://" .. newId
-            local newTrack = humanoid:LoadAnimation(newAnim)
-            newTrack:Play()
-            newTrack:AdjustSpeed(currentSpeed)
-            newTrack.TimePosition = math.min(currentTime, newTrack.Length)
-            newTrack.Priority = Enum.AnimationPriority.Action
-            break
-        end
-    end
-end
+local active = {
+    garudaActive = false,
+    ultActive = false,
+    fullModActive = false,
+    currentCleanup = nil,
+    speedLoop = nil,
+    electricClones = {},
+    handMesh = nil,
+    balls = {},
+    originalColors = {},
+    currentCharacter = nil,
+    combatTrailConnection = nil,
+    garudaHideLoop = nil,
+    visibilityUpdater = nil,
+    extraEffectsCleanup = nil,
+    blinkEffectsCleanup = nil,
+    extra4EffectsCleanup = nil,
+    electricStepCleanup = nil,
+    originalFOV = Camera.FieldOfView,
+    skillActive = false,
+    fovForced = false,
+    thunderKickDoubleTap = false, -- для двойного тапа
+    lastThunderKickTime = 0
+}
 
--- ========== РЕКОЛОР 90,90,200 (ДЛЯ СВОЕГО ПЕРСОНАЖА) ==========
-local TARGET_COLOR = Color3.fromRGB(90, 90, 200)
-
-local function applyRecolorToCharacter(char)
-    if not char then return end
-    for _, obj in ipairs(char:GetDescendants()) do
-        if obj.Name == "CombatTrail" and (obj:IsA("BasePart") or obj:IsA("MeshPart")) then
-            obj.Color = TARGET_COLOR
-        elseif obj.Name == "Trail" and obj:IsA("Trail") then
-            obj.Color = ColorSequence.new(TARGET_COLOR)
-        end
-    end
-end
-
-local function watchMyCharacter()
-    local char = LocalPlayer.Character
-    if not char then return end
-    applyRecolorToCharacter(char)
-    char.DescendantAdded:Connect(function()
-        applyRecolorToCharacter(char)
-    end)
-end
-
-LocalPlayer.CharacterAdded:Connect(function(char)
-    task.wait(0.5)
-    watchMyCharacter()
-end)
-if LocalPlayer.Character then
-    watchMyCharacter()
-end
-
--- ========== КРАСНЫЙ ЭФФЕКТ И ПРИБЛИЖЕНИЕ FOV (КРИК) ==========
-local function startRedEffect()
-    if screamEffectActive then return end
-    screamEffectActive = true
-
-    redScreenGui = Instance.new("ScreenGui")
-    redScreenGui.Name = "RedEffectGui"
-    redScreenGui.IgnoreGuiInset = true
-    redScreenGui.ResetOnSpawn = false
-    redScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-
-    redFrame = Instance.new("Frame")
-    redFrame.Size = UDim2.new(1, 0, 1, 0)
-    redFrame.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
-    redFrame.BackgroundTransparency = 1
-    redFrame.BorderSizePixel = 0
-    redFrame.Parent = redScreenGui
-
-    TweenService:Create(redFrame, TweenInfo.new(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 0.4}):Play()
-    TweenService:Create(Camera, TweenInfo.new(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {FieldOfView = 40}):Play()
-
-    task.delay(3, function()
-        if redFrame then
-            TweenService:Create(redFrame, TweenInfo.new(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1}):Play()
-            TweenService:Create(Camera, TweenInfo.new(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {FieldOfView = originalFOV}):Play()
-            task.delay(1.8, function()
-                if redScreenGui then redScreenGui:Destroy() end
-                redScreenGui = nil
-                redFrame = nil
-            end)
-        end
-        screamEffectActive = false
-    end)
-end
-
--- ========== ФУНКЦИЯ ПОИСКА ЦЕЛИ ==========
-local function GetClosestPlayerToCursor()
-    local closest = nil
-    local shortestDist = AIM_RADIUS_SCREEN + 1
-    local cursorPos = UserInputService:GetMouseLocation()
-    local char = Character
-    local myRoot = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso"))
-    if not myRoot then return nil end
-
-    for _, v in pairs(Players:GetPlayers()) do
-        if v ~= LocalPlayer and v.Character then
-            local hum = v.Character:FindFirstChild("Humanoid")
-            if hum and hum.Health > 0 then
-                local part = v.Character:FindFirstChild("HumanoidRootPart") or v.Character:FindFirstChild("Torso")
-                if part then
-                    local worldDist = (myRoot.Position - part.Position).Magnitude
-                    if worldDist <= AIM_RADIUS_WORLD then
-                        local pos, onScreen = Camera:WorldToViewportPoint(part.Position)
-                        if onScreen then
-                            local distToCursor = (Vector2.new(pos.X, pos.Y) - cursorPos).Magnitude
-                            if distToCursor < shortestDist then
-                                closest = part
-                                shortestDist = distToCursor
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-
-    for _, obj in ipairs(workspace:GetChildren()) do
-        if obj:IsA("Model") and obj ~= Character then
-            local hum = obj:FindFirstChild("Humanoid")
-            if hum and hum.Health > 0 then
-                local part = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Torso")
-                if part then
-                    local worldDist = (myRoot.Position - part.Position).Magnitude
-                    if worldDist <= AIM_RADIUS_WORLD then
-                        local pos, onScreen = Camera:WorldToViewportPoint(part.Position)
-                        if onScreen then
-                            local distToCursor = (Vector2.new(pos.X, pos.Y) - cursorPos).Magnitude
-                            if distToCursor < shortestDist then
-                                closest = part
-                                shortestDist = distToCursor
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-    return closest
-end
-
--- ========== АИМ ==========
-RunService.RenderStepped:Connect(function()
-    if aimActive and lockedTarget then
-        local targetParent = lockedTarget.Parent
-        if targetParent and targetParent:FindFirstChild("Humanoid") and targetParent.Humanoid.Health > 0 then
-            Camera.CFrame = CFrame.new(Camera.CFrame.Position, lockedTarget.Position)
-        else
-            aimActive = false
-            lockedTarget = nil
-        end
-    end
-end)
-
--- GUI переменные
-local targetButton = nil
-local skillObj = nil
-local cachedDustSource = nil
-local cachedEnergySource = nil
-local globalCC = nil
-globalCC = Instance.new("ColorCorrectionEffect", Lighting)
-globalCC.Name = "SkillColorCorrection"
-globalCC.Enabled = false
-
--- ========== ПОЛУЧЕНИЕ ОБЪЕКТА СКИЛЛА ==========
-local function getSkillObj()
-    local playerName = LocalPlayer.Name
-    local characters = workspace:FindFirstChild("Characters")
-    if not characters then return nil end
-    local playerChar = characters:FindFirstChild(playerName)
-    if not playerChar then return nil end
-    local moveset = playerChar:FindFirstChild("Moveset")
-    if not moveset then return nil end
-    local obj = moveset:FindFirstChild(SKILL_NAME)
-    if not obj then
-        obj = Instance.new("NumberValue")
-        obj.Name = SKILL_NAME
-        obj.Value = PROJ_COOLDOWN
-        obj.Parent = moveset
-        obj:SetAttribute("Key", 5)
-        obj:SetAttribute("LastUse", 0)
+local function getObject(path)
+    local obj = game
+    for part in path:gsub("%.", "/"):gmatch("([^/]+)") do
+        obj = obj and obj:FindFirstChild(part)
+        if not obj then break end
     end
     return obj
 end
 
--- ========== НАСТРОЙКА GUI ==========
-local function setupGui()
-    if not PlayerGui then PlayerGui = LocalPlayer:WaitForChild("PlayerGui") end
-    for _, v in ipairs(PlayerGui:GetDescendants()) do
-        if v:IsA("GuiObject") and v.Name == SKILL_NAME then
-            targetButton = v
-            local hotkeyLabel = v:FindFirstChildOfClass("TextLabel") or v:FindFirstChild("Hotkey") or v:FindFirstChild("Key")
-            if hotkeyLabel then hotkeyLabel.Text = "Z" end
-            break
+local function setupParticles(obj, color, rate, sizeMult, speedMult)
+    if obj:IsA("ParticleEmitter") then
+        obj.Color = ColorSequence.new(color)
+        obj.LightEmission = 1
+        obj.Brightness = 10
+        obj.ZOffset = 1.5
+        obj.Rate = rate
+        if sizeMult then
+            local seq = obj.Size
+            if seq and #seq.Keypoints > 0 then
+                obj.Size = NumberSequence.new(seq.Keypoints[1].Value * sizeMult)
+            end
+        end
+        if speedMult then
+            obj.Speed = NumberRange.new(obj.Speed.Min * speedMult, obj.Speed.Max * speedMult)
+        end
+        obj.Enabled = true
+    end
+    for _, child in ipairs(obj:GetChildren()) do setupParticles(child, color, rate, sizeMult, speedMult) end
+end
+
+local function findGarudaInCharacter(char)
+    if not char then return nil end
+    local setAssets = char:FindFirstChild("SetAssets")
+    if setAssets then
+        local garuda = setAssets:FindFirstChild("Garuda")
+        if garuda then return garuda end
+    end
+    for _, obj in ipairs(char:GetDescendants()) do
+        if obj.Name == "Garuda" and obj:IsA("Model") then return obj end
+    end
+    return nil
+end
+
+local function forceHide(obj)
+    if not obj or not obj.Parent then return end
+    for _, v in ipairs(obj:GetDescendants()) do
+        if v and (v.Name == "VisualMeshPart" or v.Name == "HandCustomMesh") then continue end
+        if v:IsA("BasePart") then v.Transparency = 1
+        elseif v:IsA("Decal") or v:IsA("Texture") then v.Transparency = 1
+        elseif v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Beam") or v:IsA("Fire") then v.Enabled = false end
+    end
+    if obj:IsA("BasePart") then obj.Transparency = 1 end
+end
+
+local function attachMeshToPart(target, meshId, textureId, scale)
+    local partForMesh = target:IsA("BasePart") and target or target:FindFirstChildWhichIsA("BasePart")
+    if not partForMesh or partForMesh:FindFirstChild("VisualMeshPart") then return end
+    local part = Instance.new("Part")
+    part.Name = "VisualMeshPart"
+    part.Parent = partForMesh
+    part.CanCollide = false
+    part.Massless = true
+    part.Size = Vector3.new(1,1,1)
+    part.Transparency = 0
+    local mesh = Instance.new("SpecialMesh", part)
+    mesh.MeshId = meshId
+    mesh.TextureId = textureId
+    mesh.Scale = scale
+    local weld = Instance.new("Weld", part)
+    weld.Part0 = partForMesh
+    weld.Part1 = part
+    weld.C0 = CFrame.new(0,0,0)
+end
+
+local function setupCombatTrail(obj, weld, char)
+    local rightArm = char:FindFirstChild("Right Arm") or char:FindFirstChild("RightHand")
+    if not rightArm then return false end
+    weld.Part0 = rightArm
+    weld.C1 = CFrame.new(0,0,0)
+    local isHandVisible = active.handMesh and active.handMesh.Transparency == 0
+    if not isHandVisible then
+        weld.C0 = CFrame.new(0,0,0)
+        obj.Size = Vector3.new(1.1,2.2,1.1)
+        obj.Transparency = 0.7
+    else
+        local posOffset = CFrame.new(0,-1,-3)
+        local rotOffset = CFrame.Angles(math.rad(90),0,0)
+        weld.C0 = posOffset * rotOffset
+        obj.Size = Vector3.new(0.6,1.2,0.6)
+        obj.Transparency = 0.5
+    end
+    obj.Color = Color3.fromRGB(232, 40, 231) -- изменено
+    obj.Material = Enum.Material.Neon
+    obj.CanCollide = false
+    local trail = obj:FindFirstChildOfClass("Trail")
+    if trail then trail.Color = ColorSequence.new(Color3.fromRGB(232, 40, 231)); trail.WidthScale = NumberSequence.new(1); trail.Enabled = true end
+    return true
+end
+
+local function onCombatTrailAdded(obj)
+    if obj.Name ~= "CombatTrail" then return end
+    task.spawn(function()
+        local weld = obj:FindFirstChild("Weld")
+        if not weld then weld = obj:WaitForChild("Weld",0.2) end
+        if not weld then return end
+        local char = LocalPlayer.Character
+        if not char then return end
+        if not weld.Part0 or not weld.Part0:IsDescendantOf(char) then return end
+        setupCombatTrail(obj, weld, char)
+    end)
+end
+
+local function tweenFOV(target, speed)
+    TweenService:Create(Camera, TweenInfo.new(speed or 0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {FieldOfView = target}):Play()
+end
+
+local function updateFOVByStickVisibility()
+    if not active.fullModActive then return end
+    if active.skillActive or active.fovForced then return end
+    local isVisible = active.handMesh and active.handMesh.Transparency == 0
+    if isVisible then
+        if Camera.FieldOfView ~= active.originalFOV then tweenFOV(active.originalFOV, 0.4) end
+    else
+        if Camera.FieldOfView ~= 110 then tweenFOV(110, 0.4) end
+    end
+end
+
+local function createGarudaElectric()
+    local char = LocalPlayer.Character
+    if not char then return {} end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return {} end
+    local base = getObject(ELECTRIC_GARUDA.Path)
+    if not base then return {} end
+    local clones = {}
+    for i = 1, ELECTRIC_GARUDA.Copies do
+        local clone = base:Clone()
+        setupParticles(clone, ELECTRIC_GARUDA.Color, ELECTRIC_GARUDA.Rate, ELECTRIC_GARUDA.SizeMult, ELECTRIC_GARUDA.SpeedMult)
+        local att = Instance.new("Attachment", root)
+        att.CFrame = CFrame.new(ELECTRIC_GARUDA.Offset) * CFrame.Angles(math.rad(ELECTRIC_GARUDA.Rotation.X), math.rad(ELECTRIC_GARUDA.Rotation.Y), math.rad(ELECTRIC_GARUDA.Rotation.Z))
+        clone.Parent = att
+        table.insert(clones, {clone = clone, att = att})
+    end
+    return clones
+end
+
+local function destroyGarudaElectric()
+    for _, entry in ipairs(active.electricClones) do
+        pcall(function() if entry.att then entry.att:Destroy() end; if entry.clone then entry.clone:Destroy() end end)
+    end
+    active.electricClones = {}
+end
+
+local function getTargetSpeed(char)
+    local info = char:FindFirstChild("Info")
+    if not info then return GARUDA_CONFIG.BaseSpeed + GARUDA_CONFIG.BuffAmount end
+    for _, flag in ipairs(GARUDA_CONFIG.StopFlags) do
+        if info:FindFirstChild(flag) then return nil end
+    end
+    return GARUDA_CONFIG.BaseSpeed + GARUDA_CONFIG.BuffAmount
+end
+
+local function startSpeedBuff(char)
+    if active.speedLoop then active.speedLoop:Disconnect() end
+    active.speedLoop = RunService.RenderStepped:Connect(function()
+        if not active.garudaActive then return end
+        if not char or not char.Parent then if active.speedLoop then active.speedLoop:Disconnect() end return end
+        local hum = char:FindFirstChildWhichIsA("Humanoid")
+        if hum then
+            local target = getTargetSpeed(char)
+            if target and hum.WalkSpeed ~= target then hum.WalkSpeed = target end
+        end
+    end)
+end
+
+local function stopSpeedBuff()
+    if active.speedLoop then active.speedLoop:Disconnect(); active.speedLoop = nil end
+    local char = LocalPlayer.Character
+    if char then
+        local hum = char:FindFirstChildWhichIsA("Humanoid")
+        if hum and hum.WalkSpeed == GARUDA_CONFIG.BaseSpeed + GARUDA_CONFIG.BuffAmount then hum.WalkSpeed = GARUDA_CONFIG.BaseSpeed end
+    end
+end
+
+local function enableGaruda()
+    if active.garudaActive then return end
+    active.garudaActive = true
+    local char = LocalPlayer.Character
+    if char then startSpeedBuff(char); active.electricClones = createGarudaElectric() end
+end
+
+local function disableGaruda()
+    if not active.garudaActive then return end
+    active.garudaActive = false
+    stopSpeedBuff()
+    destroyGarudaElectric()
+end
+
+local function updateGarudaByStick()
+    if active.handMesh and active.handMesh.Parent and active.handMesh.Transparency == 1 then enableGaruda() else disableGaruda() end
+end
+
+local function fullCleanupUlt()
+    if active.currentCleanup then active.currentCleanup(); active.currentCleanup = nil end
+    active.ultActive = false
+end
+
+local function startUltAction()
+    if active.ultActive then return end
+    fullCleanupUlt()
+    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local hum = char:FindFirstChildWhichIsA("Humanoid")
+    local root = char:FindFirstChild("HumanoidRootPart")
+    local info = char:FindFirstChild("Info")
+    local elements = {tags = {}, effects = {}}
+    local animTrack = nil
+    if hum then
+        local anim = Instance.new("Animation"); anim.AnimationId = ULT_CONFIG.AnimId
+        animTrack = hum:LoadAnimation(anim); animTrack:Play()
+    end
+    if info then
+        for _, name in ipairs({"inSkill", "Stun"}) do
+            local tag = Instance.new("BoolValue"); tag.Name = name; tag.Value = true; tag.Parent = info
+            table.insert(elements.tags, tag)
+        end
+    end
+    local baseEffect = getObject(ULT_CONFIG.EffectPath)
+    if baseEffect and root then
+        for i = 1, 3 do
+            local clone = baseEffect:Clone()
+            setupParticles(clone, ULT_CONFIG.EffectColor, ULT_CONFIG.EffectRate, nil, nil)
+            local att = Instance.new("Attachment", root); clone.Parent = att
+            table.insert(elements.effects, att); table.insert(elements.effects, clone)
+        end
+    end
+    active.currentCleanup = function()
+        if animTrack then pcall(function() animTrack:Stop(); animTrack:Destroy() end) end
+        for _, obj in ipairs(elements.tags) do pcall(function() obj:Destroy() end) end
+        for _, obj in ipairs(elements.effects) do pcall(function() obj:Destroy() end) end
+    end
+    active.ultActive = true
+end
+
+local function handleSound(sound)
+    if not sound or not sound:IsA("Sound") then return end
+    local id = sound.SoundId
+    if not id or id == "" then return end
+    local char = LocalPlayer.Character
+    if not char then return end
+    local isOur = sound:IsDescendantOf(char) or (sound.Parent and sound.Parent:IsDescendantOf(char)) or
+                  (sound.Parent and sound.Parent.Name == "Effects" and workspace.Effects and sound:IsDescendantOf(workspace.Effects))
+    if not isOur then return end
+    if id:find(SWING.Original) then
+        sound.SoundId = "rbxassetid://" .. SWING.New; sound.Volume = SWING.Volume; return
+    end
+    if id:find(FIST.Original) then
+        if active.handMesh and active.handMesh.Transparency == 0 then
+            sound.SoundId = "rbxassetid://" .. FIST.New; sound.Volume = FIST.Volume
+        end; return
+    end
+    local numId = string.match(id, "%d+")
+    local repl = ULT_CONFIG.SoundReplace[numId]
+    if repl then
+        sound.Volume = 0
+        local proxy = Instance.new("Sound", sound.Parent); proxy.SoundId = "rbxassetid://" .. repl; proxy.Volume = 1; proxy:Play(); Debris:AddItem(proxy,10)
+        if repl == "135895192563038" then
+            startUltAction(); proxy.Ended:Connect(fullCleanupUlt)
+        elseif repl == "98084023171542" or repl == "87517557827169" then
+            fullCleanupUlt()
         end
     end
 end
 
--- ========== ИНИЦИАЛИЗАЦИЯ ==========
-local function InitVariables()
-    Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    Humanoid = Character:WaitForChild("Humanoid")
-    Root = Character:WaitForChild("HumanoidRootPart")
-    PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-    skillObj = getSkillObj()
-    setupGui()
-end
-
--- ========== РЕСЕТ ПОСЛЕ СМЕРТИ ==========
-local function onRespawn()
-    task.wait(0.5)
-    Character = LocalPlayer.Character
-    if Character then
-        Humanoid = Character:FindFirstChild("Humanoid")
-        Root = Character:FindFirstChild("HumanoidRootPart")
+local function setupIdleBlock(char)
+    local hum = char:FindFirstChildWhichIsA("Humanoid")
+    if not hum then return end
+    local animator = hum:FindFirstChild("Animator")
+    if not animator then return end
+    local info = char:FindFirstChild("Info")
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    local function createTrack(id, prio)
+        local a = Instance.new("Animation"); a.AnimationId = id
+        local t = animator:LoadAnimation(a); t.Priority = prio; return t
     end
-    skillObj = getSkillObj()
-    setupGui()
-    isSkillActive = false
-    lastZUse = 0
-    lastSkillEndTime = 0
-    globalCC.Enabled = false
-    Camera.FieldOfView = originalFOV
-    aimActive = false
-    aimDisabled = false
-    lockedTarget = nil
-    lastAnimWasPlaying = false
-    soundPlayed = false
-    screamSoundPlayed = false
-    screamEffectActive = false
-    if redScreenGui then redScreenGui:Destroy() end
-    redScreenGui = nil
-    redFrame = nil
+    local idleTrack = createTrack(IDLE_CONFIG.IdleAnim, Enum.AnimationPriority.Action4)
+    local blockTrack = createTrack(IDLE_CONFIG.BlockAnim, Enum.AnimationPriority.Action4)
+    blockTrack.Looped = true
+    local isIdle = false; local isBlock = false; local idleTimer = 0
+    RunService.RenderStepped:Connect(function(dt)
+        if not char.Parent or not hum.Parent then return end
+        local vel = root.AssemblyLinearVelocity
+        local speed = (Vector3.new(vel.X,0,vel.Z)).Magnitude
+        if info and info:FindFirstChild("Block") then
+            idleTimer = 0
+            if isIdle then idleTrack:Stop(0.1); isIdle = false end
+            if not isBlock then blockTrack:Play(0.15); isBlock = true end
+        else
+            if isBlock then blockTrack:Stop(0.2); isBlock = false end
+            local moving = speed > 0.8 or (info and (info:FindFirstChild("Stun") or info:FindFirstChild("InSkill") or info:FindFirstChild("KnockBack")))
+            if not moving then
+                idleTimer = idleTimer + dt
+                if idleTimer >= IDLE_CONFIG.Delay then
+                    if not isIdle then
+                        for _, t in ipairs(animator:GetPlayingAnimationTracks()) do
+                            if t ~= blockTrack and t.Priority.Value < Enum.AnimationPriority.Action4.Value then t:Stop(0.1) end
+                        end
+                        idleTrack:Play(0.1)
+                        idleTrack.TimePosition = IDLE_CONFIG.TargetTime
+                        idleTrack:AdjustSpeed(0)
+                        isIdle = true
+                    end
+                    idleTrack.TimePosition = IDLE_CONFIG.TargetTime
+                end
+            else
+                idleTimer = 0
+                if isIdle then idleTrack:Stop(0.1); isIdle = false end
+            end
+        end
+    end)
 end
 
-LocalPlayer.CharacterAdded:Connect(onRespawn)
-InitVariables()
+local function getCurrentAnimMap()
+    local isVisible = active.handMesh and active.handMesh.Transparency == 0
+    return isVisible and AnimDataVisible or AnimDataInvisible
+end
 
--- ========== ПРОВЕРКА Z (РАЗРЕШАЕТ ОСНОВНУЮ И ВСПОМОГАТЕЛЬНУЮ АНИМАЦИИ) ==========
-local function checkZStrict()
-    if not Humanoid then return false end
-    local tracks = Humanoid:GetPlayingAnimationTracks()
-    local mainFound = false
-    for _, track in ipairs(tracks) do
-        local id = tostring(track.Animation.AnimationId)
-        if id:find(TARGET_ANIM_ID) or id:find(NEW_TARGET_ANIM_ID) then
-            mainFound = true
-        elseif track.Priority == Enum.AnimationPriority.Action or track.Priority == Enum.AnimationPriority.Action2 then
+local function setupAnimationReplacer(char)
+    local hum = char:FindFirstChildWhichIsA("Humanoid")
+    if not hum then return end
+    hum.AnimationPlayed:Connect(function(track)
+        local id = track.Animation.AnimationId
+        local map = getCurrentAnimMap()
+        local newId = map[id]
+        if newId then
+            track:Stop()
+            local newAnim = Instance.new("Animation"); newAnim.AnimationId = newId
+            local newTrack = hum:LoadAnimation(newAnim); newTrack:Play()
+            if track.Length > 0 and newTrack.Length > 0 then newTrack:AdjustSpeed(newTrack.Length / track.Length) end
+        end
+        if tostring(id):find("140491244934559") then track.Animation.AnimationId = "rbxassetid://85012092465916" end
+    end)
+end
+
+local function processBall(ball)
+    if not ball then return end
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    local ballPart = ball:IsA("BasePart") and ball or ball:FindFirstChildWhichIsA("BasePart")
+    if not ballPart then return end
+    local dist = (ballPart.Position - hrp.Position).Magnitude
+    if dist <= GARUDA_CONFIG.DetectionRadius then
+        if not active.balls[ball] then
+            active.balls[ball] = true
+            forceHide(ball)
+            attachMeshToPart(ball, GARUDA_CONFIG.MeshId, GARUDA_CONFIG.TextureId, GARUDA_CONFIG.Scale)
+            updateFOVByStickVisibility()
+        end
+    end
+end
+
+local function startBallWatcher()
+    local bullets = workspace:WaitForChild("Bullets",10)
+    if not bullets then return end
+    local function watchFolder(folder)
+        for _, child in ipairs(folder:GetChildren()) do processBall(child) end
+        folder.ChildAdded:Connect(processBall)
+    end
+    local ballFolder = bullets:FindFirstChild("Ball")
+    if ballFolder then watchFolder(ballFolder) end
+    bullets.ChildAdded:Connect(function(child) if child.Name == "Ball" then watchFolder(child) end end)
+end
+
+local function startVisibilityUpdater()
+    if active.visibilityUpdater then return end
+    active.visibilityUpdater = RunService.RenderStepped:Connect(function()
+        if not active.fullModActive then return end
+        if not active.handMesh or not active.handMesh.Parent then return end
+        local hasBall = false
+        for ball, _ in pairs(active.balls) do
+            if ball and ball.Parent then
+                hasBall = true
+                forceHide(ball)
+                attachMeshToPart(ball, GARUDA_CONFIG.MeshId, GARUDA_CONFIG.TextureId, GARUDA_CONFIG.Scale)
+            else
+                active.balls[ball] = nil
+            end
+        end
+        local newTransparency = hasBall and 1 or 0
+        if active.handMesh.Transparency ~= newTransparency then
+            active.handMesh.Transparency = newTransparency
+            updateGarudaByStick()
+            updateFOVByStickVisibility()
+        end
+    end)
+end
+
+local function setupExtraEffects(char)
+    if active.extraEffectsCleanup then active.extraEffectsCleanup(); active.extraEffectsCleanup = nil end
+    local isFrozen = false; local freezePoint = nil
+    local activePhases = { PhaseStart = nil, Phase1 = nil, Phase2 = nil }
+    local sound1 = nil; local sound2Played = false
+    local heartbeatConn = nil; local massChargeConn = nil
+    local function getObjectExtra(path) local obj = game for _, s in ipairs(path:split(".")) do obj = obj and obj:FindFirstChild(s) end return obj end
+    local function playSkippedSound(id, shouldLoopUntil)
+        local s = Instance.new("Sound", game:GetService("SoundService")); s.SoundId = "rbxassetid://" .. id; s.Volume = 1; s.TimePosition = 1; s:Play()
+        if not shouldLoopUntil then Debris:AddItem(s,10) end; return s
+    end
+    local function applyMechamaruSettings(obj)
+        if obj:IsA("ParticleEmitter") then obj.Color = ColorSequence.new(EXTRA_CONFIG.MechamaruColor); obj.Rate = EXTRA_CONFIG.StartPhase.Rate; obj.Brightness = EXTRA_CONFIG.StartPhase.Brightness; obj.LightEmission = 1; obj.ZOffset = 1; obj.Enabled = true end
+        for _, c in ipairs(obj:GetChildren()) do applyMechamaruSettings(c) end
+    end
+    local function applyComboSettings(obj, isExtra)
+        if obj:IsA("ParticleEmitter") then obj.Color = ColorSequence.new(EXTRA_CONFIG.Color); obj.Rate = isExtra and EXTRA_CONFIG.Electric.ExtraRate or EXTRA_CONFIG.Electric.Rate; obj.Brightness = EXTRA_CONFIG.Electric.Brightness; obj.LightEmission = 1; obj.ZOffset = 2; obj.Enabled = true end
+        for _, c in ipairs(obj:GetChildren()) do applyComboSettings(c, isExtra) end
+    end
+    local function applyHandSettings(obj)
+        if obj:IsA("ParticleEmitter") then obj.Color = ColorSequence.new(EXTRA_CONFIG.Color); obj.Rate = EXTRA_CONFIG.HandReplacement.Rate; obj.Speed = NumberRange.new(EXTRA_CONFIG.HandReplacement.Speed); local baseSize = obj.Size.Keypoints[1].Value; obj.Size = NumberSequence.new(baseSize * EXTRA_CONFIG.HandReplacement.Size); obj.Brightness = 10; obj.LightEmission = 1; obj.Enabled = true end
+        for _, c in ipairs(obj:GetChildren()) do applyHandSettings(c) end
+    end
+    local function ManageComboPhase(phaseKey, bodyPartName, isInside)
+        local target = char and char:FindFirstChild(bodyPartName)
+        if isInside then
+            if not activePhases[phaseKey] and target then
+                local att = Instance.new("Attachment", target); att.Name = "PhaseEffect_" .. phaseKey; att.CFrame = CFrame.new(EXTRA_CONFIG.Electric.Offset)
+                local mainBase = getObjectExtra(EXTRA_CONFIG.MainPath)
+                if mainBase then for i=1,3 do local c = mainBase:Clone(); applyComboSettings(c, false); c.Parent = att end end
+                for _, path in ipairs(EXTRA_CONFIG.ExtraPaths) do
+                    local extraBase = getObjectExtra(path)
+                    if extraBase then for i=1,3 do local c = extraBase:Clone(); applyComboSettings(c, true); c.Parent = att end end
+                end
+                activePhases[phaseKey] = att
+            end
+        else
+            if activePhases[phaseKey] then activePhases[phaseKey]:Destroy(); activePhases[phaseKey] = nil end
+        end
+    end
+    local function ManageStartPhase(isInside)
+        local root = char and char:FindFirstChild(EXTRA_CONFIG.PhaseStart.Part)
+        if isInside then
+            if not activePhases.PhaseStart and root then
+                local base = getObjectExtra(EXTRA_CONFIG.MechamaruPath)
+                if base then
+                    local att = Instance.new("Attachment", root); att.Name = "PhaseEffect_Start"; att.CFrame = CFrame.new(EXTRA_CONFIG.StartPhase.Offset)
+                    for i=1,3 do local c = base:Clone(); applyMechamaruSettings(c); c.Parent = att end
+                    activePhases.PhaseStart = att
+                end
+            end
+        else
+            if activePhases.PhaseStart then activePhases.PhaseStart:Destroy(); activePhases.PhaseStart = nil end
+        end
+    end
+    heartbeatConn = RunService.Heartbeat:Connect(function()
+        if not char or not char.Parent then return end
+        local hum = char:FindFirstChildWhichIsA("Humanoid"); local root = char:FindFirstChild("HumanoidRootPart")
+        if not hum or not root then return end
+        local track = nil
+        for _, t in pairs(hum:GetPlayingAnimationTracks()) do if t.Animation.AnimationId:find(EXTRA_CONFIG.TargetAnimId) then track = t; break end end
+        if track then
+            active.skillActive = true
+            if not isFrozen then freezePoint = root.Position; isFrozen = true end
+            root.Velocity = Vector3.new(0,0,0); root.CFrame = (root.CFrame - root.Position) + freezePoint
+            local currentTime = track.TimePosition
+            if currentTime >= 0 and currentTime < 0.65 then
+                if Camera.FieldOfView ~= 40 then tweenFOV(40, 0.3) end
+            else
+                if Camera.FieldOfView ~= active.originalFOV then tweenFOV(active.originalFOV, 0.3) end
+            end
+            if currentTime >= 0 and currentTime < 0.95 then
+                if not sound1 then sound1 = playSkippedSound("132879779265336", true) end
+            else
+                if sound1 then sound1:Stop(); sound1:Destroy(); sound1 = nil end
+            end
+            if currentTime >= 2.68 and not sound2Played then
+                playSkippedSound("132879779265336", false)
+                local s2 = Instance.new("Sound", game:GetService("SoundService")); s2.SoundId = "rbxassetid://82149097940682"; s2.Volume = 1; s2:Play(); Debris:AddItem(s2,10)
+                sound2Played = true
+            end
+            ManageStartPhase(currentTime >= EXTRA_CONFIG.PhaseStart.Start and currentTime < EXTRA_CONFIG.PhaseStart.End)
+            ManageComboPhase("Phase1", EXTRA_CONFIG.Phase1.Part, (currentTime >= EXTRA_CONFIG.Phase1.Start and currentTime < EXTRA_CONFIG.Phase1.End))
+            ManageComboPhase("Phase2", EXTRA_CONFIG.Phase2.Part, (currentTime >= EXTRA_CONFIG.Phase2.Start and currentTime < EXTRA_CONFIG.Phase2.End))
+        else
+            active.skillActive = false
+            updateFOVByStickVisibility()
+            isFrozen = false; freezePoint = nil
+            if sound1 then sound1:Stop(); sound1:Destroy(); sound1 = nil end
+            sound2Played = false
+            ManageStartPhase(false); ManageComboPhase("Phase1","",false); ManageComboPhase("Phase2","",false)
+        end
+    end)
+    local effectsFolder = workspace:WaitForChild("Effects",5)
+    local function onMassCharge(child)
+        if child.Name == "MassCharge" then
+            task.wait()
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            local part = child:IsA("BasePart") and child or child:FindFirstChildWhichIsA("BasePart")
+            if root and part and (part.Position - root.Position).Magnitude < 15 then
+                child:Destroy()
+                local rArm = char:FindFirstChild("Right Arm")
+                local replacementBase = getObjectExtra(EXTRA_CONFIG.ReplacementPath)
+                if rArm and replacementBase then
+                    for i=1,3 do
+                        local clone = replacementBase:Clone(); applyHandSettings(clone)
+                        local att = Instance.new("Attachment", rArm); att.CFrame = CFrame.new(EXTRA_CONFIG.HandReplacement.Offset); clone.Parent = att
+                        Debris:AddItem(att,1.2)
+                    end
+                end
+            end
+        end
+    end
+    if effectsFolder then
+        massChargeConn = effectsFolder.ChildAdded:Connect(onMassCharge)
+        for _, child in ipairs(effectsFolder:GetChildren()) do onMassCharge(child) end
+    end
+    active.extraEffectsCleanup = function()
+        if heartbeatConn then heartbeatConn:Disconnect() end
+        if massChargeConn then massChargeConn:Disconnect() end
+        for _, v in pairs(activePhases) do if v then pcall(function() v:Destroy() end) end end
+        if sound1 then pcall(function() sound1:Stop(); sound1:Destroy() end) end
+        active.skillActive = false
+        updateFOVByStickVisibility()
+    end
+end
+
+local function setupBlinkEffects(char)
+    if active.blinkEffectsCleanup then active.blinkEffectsCleanup(); active.blinkEffectsCleanup = nil end
+    local usedTimings = {}; local activeConnection = nil; local currentLegFX = nil
+    local RS = game:GetService("ReplicatedStorage")
+    local RING_PATH = RS:WaitForChild("Utils").Itadori.CounterHit.Feint.Ring
+    local ELEC_PATH = RS.Utils.Megumi.NueShock.Electric
+    local function applyVisualAndSoundFixes(character)
+        local fxFolder = workspace:FindFirstChild("Effects")
+        local checkList = {character}; if fxFolder then table.insert(checkList, fxFolder) end
+        for _, container in pairs(checkList) do
+            for _, obj in pairs(container:GetDescendants()) do
+                if obj:IsA("Sound") then
+                    if obj.Name == "Swing" and obj.SoundId ~= BLINK_CONFIG.NewSwingId then obj.SoundId = BLINK_CONFIG.NewSwingId
+                    elseif obj.Name == "Charge" and obj.SoundId == BLINK_CONFIG.TargetChargeId then obj.SoundId = BLINK_CONFIG.NewChargeId end
+                end
+                if obj.Name == "FullRisingRage" then
+                    if obj:IsA("BasePart") then obj.Transparency = 1 end
+                    for _, p in pairs(obj:GetDescendants()) do if p:IsA("ParticleEmitter") or p:IsA("Light") then p.Enabled = false end end
+                elseif obj.Name == "MassChargeLeg" then
+                    for _, p in pairs(obj:GetDescendants()) do if p:IsA("ParticleEmitter") then p.Color = ColorSequence.new(BLINK_CONFIG.ColorBlue); p.LightInfluence = 0 end end
+                end
+            end
+        end
+    end
+    local function spawnLegEffect(character)
+        local leg = character:FindFirstChild("Right Leg") or character:FindFirstChild("RightUpperLeg")
+        if not leg then return end
+        if currentLegFX then currentLegFX:Destroy() end
+        local att = Instance.new("Attachment", leg); att.Name = "LegFX_Nue_Fixed"; currentLegFX = att
+        local clone = ELEC_PATH:Clone()
+        local function setup(obj)
+            if obj:IsA("ParticleEmitter") then
+                local kps = {}; for _, kp in ipairs(obj.Size.Keypoints) do table.insert(kps, NumberSequenceKeypoint.new(kp.Time, kp.Value * 0.2)) end
+                obj.Size = NumberSequence.new(kps)
+                obj.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, BLINK_CONFIG.ColorBlue), ColorSequenceKeypoint.new(0.5, BLINK_CONFIG.ColorPink), ColorSequenceKeypoint.new(1, BLINK_CONFIG.ColorBlue)})
+                obj.LightInfluence = 0; obj.Brightness = 10; obj.ZOffset = 1; obj.Enabled = true; obj:Emit(120)
+            end
+            for _, c in ipairs(obj:GetChildren()) do setup(c) end
+        end
+        setup(clone); clone.Parent = att
+    end
+    local function attemptBlink(root)
+        local oldPos = root.Position; local mPos = Mouse.Hit.Position
+        local diff = Vector2.new(mPos.X, mPos.Z) - Vector2.new(oldPos.X, oldPos.Z)
+        local dist = diff.Magnitude
+        -- Проверка двойного тапа: если активен, то телепорт всегда, иначе только если дистанция >= TriggerDist
+        if active.thunderKickDoubleTap then
+            -- разрешаем телепорт всегда
+        elseif dist < BLINK_CONFIG.TriggerDist then
             return false
         end
-    end
-    return mainFound
-end
-
--- ========== ЗАПУСК ВСПОМОГАТЕЛЬНОЙ АНИМАЦИИ ==========
-local function startSecondaryAnim()
-    if not Humanoid then return end
-    local anim = Instance.new("Animation")
-    anim.AnimationId = "rbxassetid://" .. NEW_TARGET_ANIM_ID
-    local track = Humanoid:LoadAnimation(anim)
-    track:Play()
-    return track
-end
-
--- === ФАНТОМЫ ===
-local function createTrailPhantom()
-    if not Character then return end
-    local model = Instance.new("Model", workspace)
-    local partsList = {"Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg"}
-    local parts = {}
-    for _, name in ipairs(partsList) do
-        local original = Character:FindFirstChild(name)
-        if original and original:IsA("BasePart") then
-            local clone = original:Clone()
-            clone:ClearAllChildren()
-            clone.CanCollide = false
-            clone.Anchored = true
-            clone.Material = Enum.Material.SmoothPlastic
-            clone.Color = Color3.fromRGB(120, 120, 255)
-            clone.Transparency = 0.6
-            clone.CFrame = original.CFrame
-            clone.Parent = model
-            table.insert(parts, clone)
+        local dir = Vector3.new(diff.X, 0, diff.Y).Unit
+        local moveDist = math.min(dist, BLINK_CONFIG.MaxBlink)
+        local params = RaycastParams.new(); params.FilterDescendantsInstances = {root.Parent}
+        local ray = workspace:Raycast(oldPos, dir * moveDist, params)
+        local finalPos = ray and (ray.Position - (dir * 1.5)) or (oldPos + (dir * moveDist))
+        root.CFrame = CFrame.new(Vector3.new(finalPos.X, oldPos.Y, finalPos.Z), Vector3.new(finalPos.X + dir.X, oldPos.Y, finalPos.Z + dir.Z))
+        local s = Instance.new("Sound", root); s.SoundId = BLINK_CONFIG.BlinkSoundId; s.Volume = 2; s:Play(); Debris:AddItem(s,2)
+        local att = Instance.new("Attachment", root)
+        local r = RING_PATH:Clone(); r.Parent = att
+        local e = ELEC_PATH:Clone(); e.Parent = att
+        for _, v in pairs(att:GetDescendants()) do
+            if v:IsA("ParticleEmitter") then v.LightInfluence = 0; v.LockedToPart = true; v.Color = ColorSequence.new(BLINK_CONFIG.ColorBlue); v:Emit(30); task.delay(BLINK_CONFIG.EffectDuration, function() v.Enabled = false end) end
         end
+        Debris:AddItem(att,1.2)
     end
-    task.spawn(function()
-        for _, part in ipairs(parts) do
-            TweenService:Create(part, TweenInfo.new(0.5, Enum.EasingStyle.Linear), {Transparency = 1}):Play()
-        end
-        task.wait(0.5)
-        model:Destroy()
-    end)
-end
-
-local function smallActivationEffect()
-    if not Character then return end
-    local torso = Character:FindFirstChild("Torso")
-    if not torso then return end
-    local flash = Instance.new("Part")
-    flash.Size = Vector3.new(1.5, 1.5, 1.5)
-    flash.Shape = Enum.PartType.Ball
-    flash.CFrame = torso.CFrame
-    flash.Anchored = true
-    flash.CanCollide = false
-    flash.Material = Enum.Material.Neon
-    flash.Color = Color3.fromRGB(120, 120, 255)
-    flash.Transparency = 0.5
-    flash.Parent = workspace
-    Debris:AddItem(flash, 0.3)
-    TweenService:Create(flash, TweenInfo.new(0.2), {Size = Vector3.new(2.5, 2.5, 2.5), Transparency = 1}):Play()
-    for i = 1, 3 do
-        local particle = Instance.new("Part")
-        particle.Size = Vector3.new(0.2, 0.2, 0.2)
-        particle.Shape = Enum.PartType.Ball
-        particle.CFrame = torso.CFrame
-        particle.Anchored = true
-        particle.CanCollide = false
-        particle.Material = Enum.Material.Neon
-        particle.Color = Color3.fromRGB(120, 120, 255)
-        particle.Transparency = 0.4
-        particle.Parent = workspace
-        local direction = Vector3.new(math.random(-25,25)/10, math.random(0,10)/10, math.random(-25,25)/10).Unit
-        TweenService:Create(particle, TweenInfo.new(0.3), {CFrame = torso.CFrame + direction * math.random(1.5,3)}):Play()
-        TweenService:Create(particle, TweenInfo.new(0.3), {Transparency = 1}):Play()
-        Debris:AddItem(particle, 0.3)
-    end
-end
-
--- === Z СКИЛЛ ==========
-local function runZSkill()
-    -- Проверка: есть ли нужные скиллы
-    if not hasRequiredSkill() then return end
-    if tick() - lastZUse < Z_COOLDOWN then return end
-    if isSkillActive then return end
-    if not checkZStrict() then return end
-
-    lastZUse = tick()
-    isSkillActive = true
-    aimDisabled = false
-    aimActive = false
-    lockedTarget = nil
-    if skillObj then skillObj:SetAttribute("LastUse", tick()) end
-
-    smallActivationEffect()
-    -- Запускаем вспомогательную анимацию (она не прерывает скилл)
-    local secondaryTrack = startSecondaryAnim()
-
-    local originalSpeed = Humanoid.WalkSpeed
-    local startTime = tick()
-
-    globalCC.Enabled = true
-    globalCC.TintColor = Color3.fromRGB(200, 200, 255)
-    globalCC.Saturation = 1.1
-    local s = Instance.new("Sound", Root)
-    s.SoundId = SOUND_ID
-    s:Play()
-    Debris:AddItem(s, 3)
-    Camera.FieldOfView = 100
-
-    if not cachedDustSource then
-        cachedDustSource = ReplicatedStorage.Utils.Gojo.Teleport.Floor.Dust
-    end
-
-    local lastPhantomTime = 0
-    local lastWindTime = 0
-
-    while isSkillActive and tick() - startTime < SKILL_DURATION do
-        if not Character or not Humanoid or not Root then break end
-        if not checkZStrict() or Root.Velocity.Magnitude < 8 then break end
-
-        Humanoid.WalkSpeed = 50
-        if Camera.FieldOfView ~= 100 then Camera.FieldOfView = 100 end
-
-        if tick() - lastPhantomTime >= 0.1 then
-            createTrailPhantom()
-            lastPhantomTime = tick()
-        end
-
-        if tick() - lastWindTime >= 0.15 then
-            local torso = Character:FindFirstChild("Torso")
-            if torso and cachedDustSource then
-                local clone = cachedDustSource:Clone()
-                local at = Instance.new("Attachment", torso)
-                clone.Parent = at
-                local function activate(obj)
-                    if obj:IsA("ParticleEmitter") then
-                        obj.Enabled = true
-                        obj:Emit(2)
-                    end
-                    for _, child in ipairs(obj:GetChildren()) do activate(child) end
+    local function startSkill(character)
+        local hum = character:FindFirstChild("Humanoid"); local root = character:FindFirstChild("HumanoidRootPart")
+        if not hum or not root or activeConnection then return end
+        local track = nil
+        for _, t in pairs(hum:GetPlayingAnimationTracks()) do if t.Animation.AnimationId:find(BLINK_CONFIG.AnimId) then track = t; break end end
+        if not track then return end
+        active.skillActive = true
+        tweenFOV(110, 0.5)
+        local legSpawned = false
+        activeConnection = RunService.RenderStepped:Connect(function()
+            if track.IsPlaying then
+                local tPos = track.TimePosition
+                local camDir = (Camera.CFrame.LookVector * Vector3.new(1,0,1)).Unit
+                root.AssemblyLinearVelocity = Vector3.new(camDir.X * BLINK_CONFIG.PushSpeed, root.AssemblyLinearVelocity.Y, camDir.Z * BLINK_CONFIG.PushSpeed)
+                applyVisualAndSoundFixes(character)
+                for _, t in pairs(BLINK_CONFIG.TeleportTimings) do
+                    if tPos >= t and not usedTimings[t] then usedTimings[t] = true; attemptBlink(root) end
                 end
-                activate(clone)
-                Debris:AddItem(at, 0.2)
-            end
-            lastWindTime = tick()
-        end
-
-        task.wait()
-    end
-
-    lastSkillEndTime = tick()
-    isSkillActive = false
-    if secondaryTrack and secondaryTrack.IsPlaying then secondaryTrack:Stop() end
-
-    TweenService:Create(Camera, TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {FieldOfView = originalFOV}):Play()
-    TweenService:Create(globalCC, TweenInfo.new(0.5), {Saturation = 0, TintColor = Color3.fromRGB(255,255,255)}):Play()
-    task.delay(0.6, function() globalCC.Enabled = false end)
-
-    if Humanoid then
-        Humanoid.WalkSpeed = originalSpeed
-    end
-end
-
--- ========== ПАССИВКА (ИЗ СИСИ.TXT) ==========
-local lastPassiveFrame = 0
-RunService.Heartbeat:Connect(function()
-    if isSkillActive or not Humanoid then return end
-    lastPassiveFrame = lastPassiveFrame + 1
-    if lastPassiveFrame % 3 ~= 0 then return end
-    local animPlaying = false
-    for _, track in ipairs(Humanoid:GetPlayingAnimationTracks()) do
-        if track.Animation and tostring(track.Animation.AnimationId):find(PASSIVE_ANIM_ID) then
-            animPlaying = true
-            local pos = track.TimePosition
-            if pos >= 3.0 and pos <= 5.0 then
-                track.TimePosition = 6.0
-                pos = 6.0
-                if aimActive then
-                    aimActive = false
-                    aimDisabled = true
-                    lockedTarget = nil
+                if tPos >= BLINK_CONFIG.LegFxStart and tPos <= BLINK_CONFIG.LegFxEnd then
+                    if not legSpawned then legSpawned = true; spawnLegEffect(character) end
+                    if Camera.FieldOfView ~= 60 then tweenFOV(60, 0.3) end
+                else
+                    if currentLegFX then currentLegFX:Destroy(); currentLegFX = nil; legSpawned = false end
+                    if Camera.FieldOfView ~= 110 then tweenFOV(110, 0.3) end
                 end
-                if not soundPlayed then
-                    soundPlayed = true
-                    local burstSound = Instance.new("Sound", Root)
-                    burstSound.SoundId = BURST_SOUND_ID
-                    burstSound.Volume = 1
-                    burstSound:Play()
-                    Debris:AddItem(burstSound, 3)
-                end
-            end
-            if pos >= 6.0 and pos < 8.0 then
-                if not cachedEnergySource then
-                    cachedEnergySource = ReplicatedStorage.Utils.MeiMei.BirdStrikeAOE.EnergyBurst
-                end
-                if lastPassiveFrame % 6 == 0 then
-                    local arm = Character and Character:FindFirstChild("Right Arm")
-                    if arm and cachedEnergySource then
-                        local clone = cachedEnergySource:Clone()
-                        local at = Instance.new("Attachment", arm)
-                        at.Position = Vector3.new(0, -0.98, 0)
-                        clone.Parent = at
-                        local function applyB(obj)
-                            if obj:IsA("ParticleEmitter") then
-                                obj.Color = ColorSequence.new(Color3.fromRGB(120, 120, 255))
-                                local kps = {}
-                                for _, kp in ipairs(obj.Size.Keypoints) do
-                                    table.insert(kps, NumberSequenceKeypoint.new(kp.Time, kp.Value * 0.15))
-                                end
-                                obj.Size = NumberSequence.new(kps)
-                                obj.Enabled = true
-                                obj:Emit(2)
-                            end
-                            for _, c in ipairs(obj:GetChildren()) do applyB(c) end
-                        end
-                        applyB(clone)
-                        Debris:AddItem(at, 0.1)
-                    end
-                end
-            end
-            if pos >= 8.1 then
-                Camera.FieldOfView = math.lerp(Camera.FieldOfView, 50, 0.15)
             else
-                Camera.FieldOfView = math.lerp(Camera.FieldOfView, 60, 0.15)
+                active.skillActive = false
+                updateFOVByStickVisibility()
+                if currentLegFX then currentLegFX:Destroy(); currentLegFX = nil end
+                usedTimings = {}; activeConnection:Disconnect(); activeConnection = nil
+                -- сбрасываем флаг двойного тапа после использования скилла
+                active.thunderKickDoubleTap = false
             end
-            break
-        end
+        end)
     end
-    if not animPlaying and lastAnimWasPlaying then
-        aimActive = false
-        aimDisabled = false
-        lockedTarget = nil
-        soundPlayed = false
-        TweenService:Create(Camera, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {FieldOfView = originalFOV}):Play()
-    end
-    lastAnimWasPlaying = animPlaying
-end)
-
--- ========== КРИК (КРАСНЫЙ ЭКРАН + ЗВУК) ==========
-RunService.Heartbeat:Connect(function()
-    local char = Character
-    local hum = char and char:FindFirstChild("Humanoid")
-    if not hum then return end
-    for _, track in ipairs(hum:GetPlayingAnimationTracks()) do
-        if track.Animation and tostring(track.Animation.AnimationId):find(SCREAM_ANIM_ID) and track.IsPlaying then
-            if track.TimePosition >= 1.2 and not screamSoundPlayed then
-                screamSoundPlayed = true
-                local screamSound = Instance.new("Sound", Root)
-                screamSound.SoundId = SCREAM_SOUND_ID
-                screamSound.Volume = 1
-                screamSound:Play()
-                Debris:AddItem(screamSound, 5)
-                startRedEffect()
-            end
-            break
-        end
-    end
-end)
-
--- ========== ЗАМЕНА АНИМАЦИЙ УДАРА (ГЛОБАЛЬНАЯ) ==========
-RunService.Heartbeat:Connect(function()
-    for _, plr in pairs(Players:GetPlayers()) do
-        local char = plr.Character
-        if char then
-            local humanoid = char:FindFirstChild("Humanoid")
-            if humanoid then
-                for _, track in ipairs(humanoid:GetPlayingAnimationTracks()) do
-                    if track.IsPlaying then
-                        replaceAnimation(track, humanoid)
-                    end
-                end
-            end
-        end
-    end
-    for _, obj in ipairs(workspace:GetChildren()) do
-        if obj:IsA("Model") and obj ~= Character then
-            local humanoid = obj:FindFirstChild("Humanoid")
-            if humanoid then
-                for _, track in ipairs(humanoid:GetPlayingAnimationTracks()) do
-                    if track.IsPlaying then
-                        replaceAnimation(track, humanoid)
-                    end
-                end
-            end
-        end
-    end
-end)
-
--- ========== КАСТОМНЫЕ ЗВУКИ ПРИ ВАШИХ ПОПАДАНИЯХ ==========
-local IsAttacking = false
-local CurrentSkill = ""
-
-local function playLocal(sid)
-    local s = Instance.new("Sound")
-    s.SoundId = "rbxassetid://" .. sid
-    s.Volume = 0.8
-    s.Parent = LocalPlayer:WaitForChild("PlayerGui")
-    if not s.IsLoaded then s.Loaded:Wait() end
-    s:Play()
-    s.Ended:Connect(function() s:Destroy() end)
-    Debris:AddItem(s, 5)
-end
-
-local function setupHitDetector(char)
-    local hum = char:WaitForChild("Humanoid")
-    hum.AnimationPlayed:Connect(function(track)
-        local id = track.Animation.AnimationId:gsub("rbxassetid://", "")
-        if SoundData[id] then
-            local window = (id == "77583711129628" or id == "116910683335467" or id == "97207871642820") and 1.5 or 0.8
-            IsAttacking = true
-            CurrentSkill = id
-            task.delay(window, function()
-                if CurrentSkill == id then
-                    IsAttacking = false
-                end
-            end)
+    local heartbeatCheckConn = RunService.Heartbeat:Connect(function()
+        if char and not activeConnection then
+            local hum = char:FindFirstChild("Humanoid")
+            if hum then for _, t in pairs(hum:GetPlayingAnimationTracks()) do if t.Animation.AnimationId:find(BLINK_CONFIG.AnimId) then startSkill(char); break end end end
         end
     end)
+    active.blinkEffectsCleanup = function()
+        if activeConnection then activeConnection:Disconnect(); activeConnection = nil end
+        if heartbeatCheckConn then heartbeatCheckConn:Disconnect() end
+        if currentLegFX then currentLegFX:Destroy(); currentLegFX = nil end
+        active.skillActive = false
+        updateFOVByStickVisibility()
+        usedTimings = {}
+        active.thunderKickDoubleTap = false
+    end
+end
+
+local function setupExtraEffects4(char)
+    if active.extra4EffectsCleanup then active.extra4EffectsCleanup(); active.extra4EffectsCleanup = nil end
+    
+    local HRP = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChildWhichIsA("Humanoid")
+    local animator = hum and hum:FindFirstChild("Animator")
+    if not HRP or not animator then return end
+    
+    local tracks = {}
+    local atts = { hand = nil, hrp2 = nil, hrp3 = nil }
+    
+    local MAIN_ID = "77833820443705"
+    local REP1_ID = "81210313723714"
+    local REP2_ID = "84870056161157"
+    local REP3_ID = "80852442092385"
+    local TARGET_STAB_ID = "rbxassetid://137783275962038"
+    local NEW_STAB_ID = "rbxassetid://76686174099249"
+    local PHASE2_SOUND = "rbxassetid://80364180545653"
+    local PHASE3_SOUND_1 = "rbxassetid://132879779265336"
+    local PHASE3_SOUND_2 = "rbxassetid://99899371205362"
+    local P2_DL3 = "ReplicatedStorage.Utils.Nanami.RatioBreaker.Attack1.BlackFlash.BlackFlash.Black.Attachment.Attachment.DarkLightning3"
+    local P3_DL2 = "ReplicatedStorage.Utils.Nanami.RatioBreaker.Attack4.BlackFlash.Black.Attachment.Attachment.DarkLightning2"
+    local P3_BL2 = "ReplicatedStorage.Utils.Nanami.RatioBreaker.Attack4.BlackFlash.Black.Attachment.Attachment.BrightLightning2"
+    local P3_SLAM = "ReplicatedStorage.Utils.Nanami.RatioBreaker.Attack3.Slam.Slam.Black.Attachment.Attachment.BrightLightning2"
+    local HAND_P = "ReplicatedStorage.Utils.Nanami.RatioBreaker.Attack1.BlackFlash.BlackFlash.Black.Attachment.Attachment.BrightLightning"
+    local NEW_COLOR = Color3.fromRGB(232, 40, 231) -- новый цвет
+    local SLAM_BLUE = Color3.fromRGB(232, 40, 231) -- заменено
+    local LIGHT_BLUE = Color3.fromRGB(232, 40, 231) -- заменено
+    
+    local function getObj(path)
+        local obj = game
+        for _, v in ipairs(path:split(".")) do obj = obj and obj:FindFirstChild(v) end
+        return obj
+    end
+    
+    local function applySettings(o, col, rate, sz, isMult, fadeTime)
+        if o:IsA("ParticleEmitter") then
+            o.Color = ColorSequence.new(col)
+            local targetRate = rate
+            o.Rate = 0
+            o.Size = isMult and NumberSequence.new(o.Size.Keypoints[1].Value * sz) or NumberSequence.new(sz)
+            o.LightEmission, o.Brightness, o.ZOffset = 1, 7, 1.5
+            o.Enabled = true
+            TweenService:Create(o, TweenInfo.new(fadeTime or 0.15), {Rate = targetRate}):Play()
+        end
+        for _, c in ipairs(o:GetChildren()) do applySettings(c, col, rate, sz, isMult, fadeTime) end
+    end
+    
+    local function fadeOutAndDestroy(att, fadeTime)
+        if not att then return end
+        for _, v in pairs(att:GetDescendants()) do
+            if v:IsA("ParticleEmitter") then
+                TweenService:Create(v, TweenInfo.new(fadeTime or 0.2), {Rate = 0}):Play()
+            end
+        end
+        Debris:AddItem(att, fadeTime or 0.2)
+    end
+    
+    local function setLock(activeLock)
+        local lock = HRP:FindFirstChild("AntiFloat")
+        if activeLock then
+            if not lock then
+                lock = Instance.new("BodyVelocity", HRP); lock.Name = "AntiFloat"
+                lock.MaxForce = Vector3.new(0, 2e6, 0); lock.Velocity = Vector3.new(0, 0, 0)
+            end
+        else
+            if lock then lock:Destroy() end
+        end
+    end
+    
+    local function physics(activePhysics)
+        local v = HRP:FindFirstChild("DashVel")
+        if activePhysics then
+            if not v then
+                v = Instance.new("BodyVelocity", HRP); v.Name = "DashVel"
+                v.MaxForce = Vector3.new(2e6, 2e6, 2e6)
+                -- уменьшили вертикальную скорость с 45 до 20 для уменьшения подкидывания
+                v.Velocity = (HRP.CFrame.LookVector * 70) + Vector3.new(0, 20, 0)
+            end
+        else
+            if v then v:Destroy() end
+        end
+    end
+    
+    local connDescendant = char.DescendantAdded:Connect(function(v)
+        if v:IsA("Sound") and v.SoundId == TARGET_STAB_ID then
+            v.SoundId = NEW_STAB_ID
+        end
+    end)
+    
+    local function forceFOV(target, duration)
+        active.fovForced = true
+        tweenFOV(target, 0.3)
+        task.delay(duration or 0.5, function()
+            active.fovForced = false
+            updateFOVByStickVisibility()
+        end)
+    end
+    
+    local heartbeatConn = RunService.Heartbeat:Connect(function()
+        if not char or not char.Parent then return end
+        local humNow = char:FindFirstChildWhichIsA("Humanoid")
+        if not humNow then return end
+        local animatorNow = humNow:FindFirstChild("Animator")
+        if not animatorNow then return end
+        
+        local main = nil
+        for _, t in pairs(animatorNow:GetPlayingAnimationTracks()) do
+            if t.Animation.AnimationId:find(MAIN_ID) then main = t; break end
+        end
+        
+        if main then
+            active.skillActive = true
+            local tp = main.TimePosition
+            
+            if tp >= 0 and tp <= 1.15 then
+                if not tracks.r1 then
+                    local a = Instance.new("Animation"); a.AnimationId = "rbxassetid://"..REP1_ID
+                    tracks.r1 = animatorNow:LoadAnimation(a); tracks.r1:Play()
+                    forceFOV(55, 1.2)
+                end
+                tracks.r1.TimePosition = tp * (1 / 1.15); main:AdjustWeight(0.001)
+            else
+                if tracks.r1 then tracks.r1:Stop(); tracks.r1 = nil end
+            end
+            
+            if tp >= 2.03 and tp <= 3.0 then
+                if not tracks.r2 then
+                    local a = Instance.new("Animation"); a.AnimationId = "rbxassetid://"..REP2_ID
+                    tracks.r2 = animatorNow:LoadAnimation(a); tracks.r2:Play()
+                    physics(true)
+                    forceFOV(110, 1.2)
+                    local s = Instance.new("Sound", HRP)
+                    s.SoundId = PHASE2_SOUND; s.Volume = 2; s:Play(); Debris:AddItem(s,5)
+                end
+                tracks.r2.TimePosition = tp - 2.03; main:AdjustWeight(0.001)
+                
+                if not atts.hand then
+                    local rArm = char:FindFirstChild("Right Arm")
+                    local hEff = getObj(HAND_P)
+                    if rArm and hEff then
+                        atts.hand = Instance.new("Attachment", rArm); atts.hand.CFrame = CFrame.new(0,0,-1)
+                        for i=1,3 do
+                            local c = hEff:Clone(); applySettings(c, NEW_COLOR, 100, 0.15, true); c.Parent = atts.hand
+                        end
+                    end
+                end
+                if not atts.hrp2 then
+                    local d3 = getObj(P2_DL3)
+                    if d3 then
+                        atts.hrp2 = Instance.new("Attachment", HRP)
+                        for i=1,3 do
+                            local c = d3:Clone(); applySettings(c, LIGHT_BLUE, 15, 5, false); c.Parent = atts.hrp2
+                        end
+                    end
+                end
+            else
+                if tracks.r2 then tracks.r2:Stop(); tracks.r2 = nil end
+                if atts.hand then atts.hand:Destroy(); atts.hand = nil end
+                if atts.hrp2 then atts.hrp2:Destroy(); atts.hrp2 = nil end
+                physics(false)
+            end
+            
+            if tp >= 3.97 and tp <= 6.23 then
+                if not tracks.r3 then
+                    local a = Instance.new("Animation"); a.AnimationId = "rbxassetid://"..REP3_ID
+                    tracks.r3 = animatorNow:LoadAnimation(a); tracks.r3:Play(); setLock(true)
+                    forceFOV(120, 1.5)
+                    local s1 = Instance.new("Sound", HRP)
+                    s1.SoundId = PHASE3_SOUND_1; s1.Volume = 2; s1:Play(); Debris:AddItem(s1,10)
+                    local s2 = Instance.new("Sound", HRP)
+                    s2.SoundId = PHASE3_SOUND_2; s2.Volume = 2; s2:Play(); Debris:AddItem(s2,10)
+                end
+                tracks.r3.TimePosition = (tp - 3.97) * (2 / 2.26); main:AdjustWeight(0.001)
+                
+                if not atts.hrp3 then
+                    atts.hrp3 = Instance.new("Attachment", HRP)
+                    local d2 = getObj(P3_DL2); local b2 = getObj(P3_BL2); local slam = getObj(P3_SLAM)
+                    for i=1,3 do
+                        if d2 then
+                            local c = d2:Clone(); applySettings(c, NEW_COLOR, 30, 1, true, 0.2); c.Parent = atts.hrp3
+                        end
+                        if b2 then
+                            local c = b2:Clone(); applySettings(c, NEW_COLOR, 30, 1, true, 0.2); c.Parent = atts.hrp3
+                        end
+                        if slam then
+                            local c = slam:Clone(); applySettings(c, SLAM_BLUE, 30, 1, true, 0.2); c.Parent = atts.hrp3
+                        end
+                    end
+                end
+            else
+                if tracks.r3 then
+                    tracks.r3:Stop(); tracks.r3 = nil
+                    fadeOutAndDestroy(atts.hrp3, 0.2); atts.hrp3 = nil
+                    setLock(false)
+                end
+            end
+        else
+            active.skillActive = false
+            updateFOVByStickVisibility()
+            for _, v in pairs(tracks) do if v then v:Stop() end end; table.clear(tracks)
+            for _, v in pairs(atts) do if v then v:Destroy() end end; atts = { hand = nil, hrp2 = nil, hrp3 = nil }
+            setLock(false); physics(false)
+        end
+    end)
+    
+    active.extra4EffectsCleanup = function()
+        if heartbeatConn then heartbeatConn:Disconnect() end
+        if connDescendant then connDescendant:Disconnect() end
+        for _, v in pairs(tracks) do if v then pcall(function() v:Stop() end) end end
+        for _, v in pairs(atts) do if v then pcall(function() v:Destroy() end) end end
+        setLock(false); physics(false)
+        active.skillActive = false
+        active.fovForced = false
+        updateFOVByStickVisibility()
+    end
+end
+
+local function setupElectricStep(char)
+    if active.electricStepCleanup then active.electricStepCleanup(); active.electricStepCleanup = nil end
+    
+    local MAX_STACKS = 3
+    local STACK_COOLDOWN = 5
+    local SKILL_NAME = "Electric Step"
+    local ANIM_ID = "rbxassetid://85012092465916"
+    local SOUND_ID = "rbxassetid://95531832721711"
+    local DASH_DURATION = 0.2
+    local COLOR_BLUE = Color3.fromRGB(232, 40, 231) -- изменено
+    local NORMAL_FOV = 70
+    local DASH_FOV = 100
+    local FORBIDDEN_STATES = {"Stun", "InSkill", "ItadoriCancel", "ReboundHold", "NoSprint"}
+    
+    local currentStacks = MAX_STACKS
+    local lastStackRegen = tick()
+    local isDashing = false
+    local ELEC_PATH = ReplicatedStorage:WaitForChild("Utils"):WaitForChild("Megumi"):WaitForChild("NueShock"):WaitForChild("Electric")
+    
+    local function forceFOV(target, duration)
+        active.fovForced = true
+        TweenService:Create(Camera, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {FieldOfView = target}):Play()
+        task.delay(duration or 0.3, function()
+            active.fovForced = false
+            updateFOVByStickVisibility()
+        end)
+    end
+    
+    local function createAfterImage(character)
+        local model = Instance.new("Model")
+        model.Name = "AfterImage"
+        model.Parent = workspace
+        for _, part in ipairs(character:GetChildren()) do
+            if part:IsA("BasePart") and part.Transparency < 1 and part.Name ~= "HumanoidRootPart" then
+                local p = part:Clone()
+                p.Anchored = true
+                p.CanCollide = false
+                p.Material = Enum.Material.Neon
+                p.Color = COLOR_BLUE
+                p.Transparency = 0.6
+                p.CFrame = part.CFrame
+                p.Parent = model
+                for _, v in ipairs(p:GetChildren()) do if not v:IsA("SpecialMesh") then v:Destroy() end end
+                task.spawn(function()
+                    TweenService:Create(p, TweenInfo.new(0.4, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {Transparency = 1}):Play()
+                end)
+            end
+        end
+        Debris:AddItem(model, 0.5)
+    end
+    
+    local function canUseSkill()
+        if isDashing then return false end
+        local character = LocalPlayer.Character
+        local hum = character and character:FindFirstChild("Humanoid")
+        if not character or not hum then return false end
+        if hum.FloorMaterial == Enum.Material.Air then return false end
+        local info = character:FindFirstChild("Info")
+        if info then
+            for _, state in ipairs(FORBIDDEN_STATES) do
+                if info:FindFirstChild(state) then return false end
+            end
+        end
+        return true
+    end
+    
+    local function applyDash()
+        local character = LocalPlayer.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        local hum = character and character:FindFirstChild("Humanoid")
+        if not root or not hum then return end
+        
+        isDashing = true
+        active.skillActive = true
+        forceFOV(DASH_FOV, DASH_DURATION + 0.2)
+        
+        local s = Instance.new("Sound", root)
+        s.SoundId = SOUND_ID
+        s.Volume = 2
+        s:Play()
+        Debris:AddItem(s,2)
+        
+        local anim = Instance.new("Animation")
+        anim.AnimationId = ANIM_ID
+        local track = hum:LoadAnimation(anim)
+        track.Priority = Enum.AnimationPriority.Action4
+        track:Play()
+        
+        local att = Instance.new("Attachment", root)
+        local e = ELEC_PATH:Clone()
+        e.Parent = att
+        for _, v in pairs(att:GetDescendants()) do
+            if v:IsA("ParticleEmitter") then
+                v.LightInfluence = 0
+                v.LockedToPart = true
+                v.Color = ColorSequence.new(COLOR_BLUE)
+                v:Emit(70)
+                local kps = {}
+                for _, kp in ipairs(v.Size.Keypoints) do
+                    table.insert(kps, NumberSequenceKeypoint.new(kp.Time, kp.Value * 0.4))
+                end
+                v.Size = NumberSequence.new(kps)
+                task.delay(0.3, function() v.Enabled = false end)
+            end
+        end
+        Debris:AddItem(att,1.2)
+        
+        local look = Camera.CFrame.LookVector
+        local dashDir = (Vector3.new(look.X, 0, look.Z)).Unit
+        if look.X == 0 and look.Z == 0 then dashDir = root.CFrame.LookVector end
+        root.CFrame = CFrame.new(root.Position, root.Position + dashDir)
+        
+        local isStickInvisible = active.handMesh and active.handMesh.Transparency == 1
+        -- уменьшаем скорость в visible моде с 125 до 123 (примерно 1.5%)
+        local dashSpeed = isStickInvisible and 75 or 123
+        
+        local startTime = tick()
+        local lastImage = 0
+        local dashConn
+        dashConn = RunService.Heartbeat:Connect(function()
+            if tick() - startTime < DASH_DURATION and character and character.Parent then
+                root.AssemblyLinearVelocity = dashDir * dashSpeed + Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
+                root.CFrame = CFrame.new(root.Position, root.Position + dashDir)
+                if tick() - lastImage > 0.05 then
+                    createAfterImage(character)
+                    lastImage = tick()
+                end
+            else
+                dashConn:Disconnect()
+                track:Stop(0.1)
+                track:Destroy()
+                isDashing = false
+                active.skillActive = false
+                updateFOVByStickVisibility()
+            end
+        end)
+    end
+    
+    local function useSkill()
+        if not active.fullModActive then return end
+        local isStickInvisible = active.handMesh and active.handMesh.Transparency == 1
+        if isStickInvisible then
+            if canUseSkill() then
+                applyDash()
+            end
+        else
+            if currentStacks > 0 and canUseSkill() then
+                currentStacks = currentStacks - 1
+                if currentStacks == MAX_STACKS - 1 then lastStackRegen = tick() end
+                applyDash()
+            end
+        end
+    end
+    
+    local main = pgui:FindFirstChild("Main")
+    if not main then return end
+    local moveset = main:FindFirstChild("Moveset", true)
+    if not moveset then return end
+    local original = moveset:FindFirstChild("Garuda Rebound")
+    if not original then return end
+    
+    if moveset:FindFirstChild("ElectricStep_Skill") then
+        moveset.ElectricStep_Skill:Destroy()
+    end
+    
+    local clone = original:Clone()
+    clone.Name = "ElectricStep_Skill"
+    clone.LayoutOrder = -1000
+    local itemName = clone:WaitForChild("ItemName")
+    local keyContainer = clone:FindFirstChild("Key")
+    local keyText = nil
+    if keyContainer then
+        if keyContainer:IsA("TextLabel") or keyContainer:IsA("TextButton") then
+            keyText = keyContainer
+        else
+            keyText = keyContainer:FindFirstChildWhichIsA("TextLabel") or keyContainer:FindFirstChildWhichIsA("TextButton")
+        end
+    end
+    if clone:FindFirstChild("Tip") then clone.Tip:Destroy() end
+    
+    local function forceText()
+        local isStickInvisible = active.handMesh and active.handMesh.Transparency == 1
+        if isStickInvisible then
+            if itemName.Text ~= SKILL_NAME then itemName.Text = SKILL_NAME end
+        else
+            local txt = string.format("%s %d/%d", SKILL_NAME, currentStacks, MAX_STACKS)
+            if itemName.Text ~= txt then itemName.Text = txt end
+        end
+        if keyText and keyText.Text ~= "Z" then
+            keyText.Text = "Z"
+        end
+    end
+    
+    itemName:GetPropertyChangedSignal("Text"):Connect(forceText)
+    forceText()
+    
+    for _, s in ipairs(clone:GetDescendants()) do
+        if s:IsA("LocalScript") then s.Disabled = true end
+    end
+    clone.Parent = moveset
+    
+    local bar = clone:FindFirstChild("Cooldown", true) or clone:FindFirstChild("Progress", true)
+    local cooldownLoop = RunService.Heartbeat:Connect(function()
+        if not clone or not clone.Parent then return end
+        local isStickInvisible = active.handMesh and active.handMesh.Transparency == 1
+        if isStickInvisible then
+            if bar then bar.Visible = false end
+        else
+            if currentStacks < MAX_STACKS then
+                local elapsed = tick() - lastStackRegen
+                if elapsed >= STACK_COOLDOWN then
+                    currentStacks = math.min(currentStacks + 1, MAX_STACKS)
+                    lastStackRegen = tick()
+                end
+                if bar then
+                    bar.Visible = true
+                    bar.Size = UDim2.new(1, 0, math.clamp(1 - (elapsed / STACK_COOLDOWN), 0, 1), 0)
+                end
+            elseif bar then
+                bar.Visible = false
+            end
+        end
+        forceText()
+    end)
+    
+    local clickConn = itemName.MouseButton1Click:Connect(useSkill)
+    local inputConn = UserInputService.InputBegan:Connect(function(i, g)
+        if not g and i.KeyCode == Enum.KeyCode.Z then useSkill() end
+    end)
+    
+    active.electricStepCleanup = function()
+        if clickConn then clickConn:Disconnect() end
+        if inputConn then inputConn:Disconnect() end
+        if cooldownLoop then cooldownLoop:Disconnect() end
+        if clone then clone:Destroy() end
+        isDashing = false
+        active.skillActive = false
+        active.fovForced = false
+        updateFOVByStickVisibility()
+    end
+end
+
+local function resetUIToDefault()
+    local main = pgui:FindFirstChild("Main")
+    if not main then return end
+    local ultFrame = main:FindFirstChild("Ultimate", true)
+    if ultFrame then
+        local bar = ultFrame:FindFirstChild("Bar", true)
+        if bar then
+            local touch = bar:FindFirstChild("Touch", true); if touch then touch.Active = true; touch.Visible = true end
+            local readyLabel = bar:FindFirstChild("Ready", true) and bar.Ready:FindFirstChild("Ready", true); if readyLabel then readyLabel.Text = "Press G To Activate" end
+        end
+    end
+    ContextActionService:UnbindAction("Lightning_InputLock")
+    for obj, color in pairs(active.originalColors) do
+        if obj and obj.Parent then
+            if obj:IsA("UIGradient") then obj.Color = color
+            elseif obj:IsA("ImageLabel") then obj.ImageColor3 = color
+            else obj.BackgroundColor3 = color end
+        end
+    end
+    active.originalColors = {}
+end
+
+local function changeUltColors()
+    local main = pgui:FindFirstChild("Main")
+    if not main then return false end
+    local ultFrame = main:FindFirstChild("Ultimate", true)
+    if not ultFrame then return false end
+    local function recolor(parent, color, save)
+        if not parent then return end
+        for _, child in ipairs(parent:GetDescendants()) do
+            local name = child.Name:lower()
+            if name:find("fill") or name:find("progress") then
+                if child:IsA("Frame") or child:IsA("ImageLabel") or child:IsA("UIGradient") then
+                    if save and not active.originalColors[child] then
+                        if child:IsA("UIGradient") then active.originalColors[child] = child.Color
+                        elseif child:IsA("ImageLabel") then active.originalColors[child] = child.ImageColor3
+                        else active.originalColors[child] = child.BackgroundColor3 end
+                    end
+                    if child:IsA("UIGradient") then child.Color = ColorSequence.new(color)
+                    elseif child:IsA("ImageLabel") then child.ImageColor3 = color
+                    else child.BackgroundColor3 = color end
+                end
+            end
+        end
+    end
+    local bar = ultFrame:FindFirstChild("Bar", true); local special = ultFrame:FindFirstChild("Special", true)
+    if not bar and not special then return false end
+    recolor(bar, ULT_CONFIG.LightningColor, true); recolor(special, ULT_CONFIG.LightningColor, true)
+    return true
+end
+
+local function blockGandTouch()
+    local main = pgui:FindFirstChild("Main")
+    if not main then return false end
+    local ultFrame = main:FindFirstChild("Ultimate", true)
+    if not ultFrame then return false end
+    local bar = ultFrame:FindFirstChild("Bar", true)
+    if not bar then return false end
+    local touch = bar:FindFirstChild("Touch", true); if touch then touch.Active = false; touch.Visible = false end
+    local readyLabel = bar:FindFirstChild("Ready", true) and bar.Ready:FindFirstChild("Ready", true); if readyLabel then readyLabel.Text = "..." end
+    ContextActionService:BindActionAtPriority("Lightning_InputLock", function() return Enum.ContextActionResult.Sink end, false, 3000, Enum.KeyCode.G)
+    return true
+end
+
+local function checkSkillsAndUlt()
+    local main = pgui:FindFirstChild("Main")
+    if not main then return false end
+    local moveset = main:FindFirstChild("Moveset", true)
+    if not moveset then return false end
+    for original, new in pairs(ULT_CONFIG.MovesMap) do
+        local item = moveset:FindFirstChild(original); local label = item and item:FindFirstChild("ItemName")
+        if not label then return false end
+        if label.Text ~= new then label.Text = new; if label.Text ~= new then return false end end
+    end
+    local ultFrame = main:FindFirstChild("Ultimate", true)
+    if not ultFrame then return false end
+    local title = ultFrame:FindFirstChild("Title", true)
+    if not title then return false end
+    if title.Text ~= ULT_CONFIG.NewUltTitle then title.Text = ULT_CONFIG.NewUltTitle; if title.Text ~= ULT_CONFIG.NewUltTitle then return false end end
+    return true
+end
+
+local function setupHandMeshAndCombatTrail(char)
+    local hand = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm")
+    if not hand then hand = char:WaitForChild("RightHand",2) or char:WaitForChild("Right Arm",2) end
+    if not hand then return false end
+    if hand:FindFirstChild("HandCustomMesh") then hand.HandCustomMesh:Destroy() end
+    local part = Instance.new("Part", hand); part.Name = "HandCustomMesh"; part.CanCollide = false; part.Massless = true; part.Size = Vector3.new(1,1,1)
+    active.handMesh = part
+    local mesh = Instance.new("SpecialMesh", part); mesh.MeshId = GARUDA_CONFIG.MeshId; mesh.TextureId = GARUDA_CONFIG.TextureId; mesh.Scale = GARUDA_CONFIG.Scale
+    local weld = Instance.new("Weld", part); weld.Part0 = hand; weld.Part1 = part; weld.C0 = CFrame.new(0,-1,0) * CFrame.Angles(math.rad(-45), math.rad(-90), 0)
+    local effectsFolder = workspace:WaitForChild("Effects",5)
+    if effectsFolder then
+        if active.combatTrailConnection then active.combatTrailConnection:Disconnect() end
+        active.combatTrailConnection = effectsFolder.ChildAdded:Connect(onCombatTrailAdded)
+        for _, child in ipairs(effectsFolder:GetChildren()) do onCombatTrailAdded(child) end
+    end
+    return true
+end
+
+local function hideGarudaLoop(char)
+    if active.garudaHideLoop then task.cancel(active.garudaHideLoop) end
+    active.garudaHideLoop = task.spawn(function()
+        while active.fullModActive and char and char.Parent do
+            local garuda = findGarudaInCharacter(char); if garuda then forceHide(garuda) end
+            task.wait(0.5)
+        end
+    end)
+end
+
+local function activateAllAfterValidation(char)
+    local startTime = os.clock(); local timeout = 5; local skillsOk = false
+    while os.clock() - startTime < timeout do if checkSkillsAndUlt() then skillsOk = true; break end; task.wait(0.1) end
+    if not skillsOk then return false end
+    if not changeUltColors() then return false end
+    if not blockGandTouch() then return false end
+    active.fullModActive = true
+    if not setupHandMeshAndCombatTrail(char) then return false end
+    setupAnimationReplacer(char)
+    setupIdleBlock(char)
+    hideGarudaLoop(char)
+    startBallWatcher()
+    startVisibilityUpdater()
+    setupExtraEffects(char)
+    setupBlinkEffects(char)
+    setupExtraEffects4(char)
+    setupElectricStep(char)
+
+    -- Обработка двойного клика для Thunder Kick (Rising Rage)
+    local main = pgui:FindFirstChild("Main")
+    if main then
+        local moveset = main:FindFirstChild("Moveset", true)
+        if moveset then
+            local risingRage = moveset:FindFirstChild("Rising Rage")
+            if risingRage then
+                local itemName = risingRage:FindFirstChild("ItemName")
+                if itemName then
+                    itemName.MouseButton1Click:Connect(function()
+                        local now = tick()
+                        if now - active.lastThunderKickTime < 0.3 then
+                            active.thunderKickDoubleTap = true
+                        else
+                            active.thunderKickDoubleTap = false
+                        end
+                        active.lastThunderKickTime = now
+                    end)
+                end
+            end
+        end
+    end
+
+    return true
+end
+
+local function fullReset()
+    active.fullModActive = false
+    active.garudaActive = false
+    active.ultActive = false
+    active.skillActive = false
+    active.fovForced = false
+    active.thunderKickDoubleTap = false
+    fullCleanupUlt()
+    disableGaruda()
+    if active.garudaHideLoop then task.cancel(active.garudaHideLoop); active.garudaHideLoop = nil end
+    if active.visibilityUpdater then active.visibilityUpdater:Disconnect(); active.visibilityUpdater = nil end
+    if active.combatTrailConnection then active.combatTrailConnection:Disconnect(); active.combatTrailConnection = nil end
+    if active.extraEffectsCleanup then active.extraEffectsCleanup(); active.extraEffectsCleanup = nil end
+    if active.blinkEffectsCleanup then active.blinkEffectsCleanup(); active.blinkEffectsCleanup = nil end
+    if active.extra4EffectsCleanup then active.extra4EffectsCleanup(); active.extra4EffectsCleanup = nil end
+    if active.electricStepCleanup then active.electricStepCleanup(); active.electricStepCleanup = nil end
+    for ball, _ in pairs(active.balls) do
+        if ball and ball.Parent then
+            local mesh = ball:FindFirstChild("VisualMeshPart"); if mesh then mesh:Destroy() end
+        end
+    end
+    active.balls = {}
+    if active.handMesh then pcall(function() active.handMesh:Destroy() end); active.handMesh = nil end
+    active.electricClones = {}
+    if active.speedLoop then active.speedLoop:Disconnect(); active.speedLoop = nil end
+    resetUIToDefault()
+    tweenFOV(active.originalFOV,0.3)
 end
 
 local function onCharacterAdded(char)
-    task.wait(0.5)
-    setupHitDetector(char)
+    active.currentCharacter = char
+    fullReset()
+    task.wait(0.2)
+    activateAllAfterValidation(char)
 end
 
-local remotePath = ReplicatedStorage:FindFirstChild("Knit")
-if remotePath then remotePath = remotePath:FindFirstChild("Knit") end
-if remotePath then remotePath = remotePath:FindFirstChild("Services") end
-if remotePath then remotePath = remotePath:FindFirstChild("NaoyaService") end
-if remotePath then remotePath = remotePath:FindFirstChild("RE") end
-if remotePath then remotePath = remotePath:FindFirstChild("Effects") end
+game.DescendantAdded:Connect(handleSound)
+task.spawn(function()
+    task.wait(1)
+    for _, snd in ipairs(game:GetDescendants()) do if snd:IsA("Sound") then handleSound(snd) end end
+end)
 
-if remotePath and remotePath:IsA("RemoteEvent") then
-    remotePath.OnClientEvent:Connect(function(...)
-        local args = {...}
-        if IsAttacking and (args[1] == "Hit" or args[1] == "Damage") then
-            local sid = SoundData[CurrentSkill]
-            if sid then
-                playLocal(sid)
-            end
-        end
-    end)
-else
-    warn("NaoyaService.Effects не найден, звуки удара не будут работать")
-end
+UserInputService.InputEnded:Connect(function(input) if input.KeyCode == Enum.KeyCode.R then fullCleanupUlt() end end)
 
-if LocalPlayer.Character then
-    setupHitDetector(LocalPlayer.Character)
-end
 LocalPlayer.CharacterAdded:Connect(onCharacterAdded)
-
--- ========== АИМ ТРЕКЕР ==========
-RunService.Heartbeat:Connect(function()
-    local char = Character
-    local hum = char and char:FindFirstChild("Humanoid")
-    if not hum then return end
-    for _, track in ipairs(hum:GetPlayingAnimationTracks()) do
-        if track.Animation and tostring(track.Animation.AnimationId):find(PASSIVE_ANIM_ID) then
-            local currentPos = track.TimePosition
-            local now = tick()
-            local zWasActive = (now - lastZUse) <= 0.1 or (now - lastSkillEndTime) <= 0.1 or isSkillActive
-            if zWasActive and not aimDisabled then
-                if currentPos < 6.0 or currentPos > 6.5 then
-                    if not aimActive and not lockedTarget then
-                        lockedTarget = GetClosestPlayerToCursor()
-                        if lockedTarget then aimActive = true end
-                    end
-                else
-                    if aimActive then
-                        aimActive = false
-                        aimDisabled = true
-                        lockedTarget = nil
-                    end
-                end
-            end
-            break
-        end
-    end
-end)
-
--- ========== GUI ОБНОВЛЕНИЕ (КД + СКРЫТИЕ КНОПКИ ЕСЛИ НЕТ СКИЛЛОВ) ==========
-task.spawn(function()
-    while task.wait(0.05) do
-        if not skillObj then skillObj = getSkillObj() end
-        if not targetButton then setupGui() end
-        local hasSkill = hasRequiredSkill()
-        if skillObj and targetButton then
-            if hasSkill then
-                targetButton.Visible = true
-                local lastUse = skillObj:GetAttribute("LastUse") or 0
-                local progress = math.clamp(1 - ((tick() - lastUse) / PROJ_COOLDOWN), 0, 1)
-                local bar = targetButton:FindFirstChild("Cooldown") or targetButton:FindFirstChild("Progress")
-                if bar then
-                    bar.Visible = progress > 0
-                    bar.Size = UDim2.new(1, 0, progress, 0)
-                end
-                if progress > 0 then
-                    targetButton.Active = false
-                    targetButton.Selectable = false
-                else
-                    targetButton.Active = true
-                    targetButton.Selectable = true
-                end
-            else
-                targetButton.Visible = false
-            end
-        end
-    end
-end)
-
--- ========== ВЕНГЕРФУЛ ВИЗУАЛ (Vengeful Spirit) ==========
-local vengerfulGradients = {}
-task.spawn(function()
-    while true do
-        local char = Character
-        local moveset = char and char:FindFirstChild("Moveset")
-        if not moveset then
-            local playerName = LocalPlayer.Name
-            local characters = workspace:FindFirstChild("Characters")
-            if characters then
-                local playerChar = characters:FindFirstChild(playerName)
-                if playerChar then
-                    moveset = playerChar:FindFirstChild("Moveset")
-                end
-            end
-        end
-        local hasSkill = false
-        if moveset then
-            for _, move in ipairs(moveset:GetChildren()) do
-                if ALLOWED_MOVES[move.Name] then
-                    hasSkill = true
-                    break
-                end
-            end
-        end
-        local pGui = LocalPlayer:FindFirstChild("PlayerGui")
-        local ult = pGui and pGui:FindFirstChild("Main") and pGui.Main:FindFirstChild("Ultimate")
-        if ult then
-            local components = {ult:FindFirstChild("Bar"), ult:FindFirstChild("Special")}
-            for _, parent in pairs(components) do
-                if parent then
-                    for _, child in ipairs(parent:GetChildren()) do
-                        if child.Name == "Fill" or child.Name == "Fill2" then
-                            local grad = child:FindFirstChildOfClass("UIGradient")
-                            if grad then
-                                if hasSkill then
-                                    if not vengerfulGradients[child] then
-                                        vengerfulGradients[child] = grad.Color
-                                    end
-                                    child.BackgroundColor3 = Color3.new(1, 1, 1)
-                                    grad.Color = ColorSequence.new(Color3.fromRGB(120, 120, 255), Color3.fromRGB(80, 80, 200))
-                                    grad.Enabled = true
-                                else
-                                    if vengerfulGradients[child] then
-                                        grad.Color = vengerfulGradients[child]
-                                        vengerfulGradients[child] = nil
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            local title = ult:FindFirstChild("Title")
-            if title and title:IsA("TextLabel") then
-                if hasSkill then
-                    title.Text = "Vengeful Spirit"
-                else
-                    if title.Text == "Vengeful Spirit" then
-                        title.Text = ""
-                    end
-                end
-            end
-        end
-        task.wait(1)
-    end
-end)
-
--- ========== АКТИВАЦИЯ ПО Z ==========
-UserInputService.InputBegan:Connect(function(input, gpe)
-    if gpe then return end
-    if isSkillActive then return end
-    if input.KeyCode == Enum.KeyCode.Z then
-        runZSkill()
-    end
-end)
+if LocalPlayer.Character then onCharacterAdded(LocalPlayer.Character) end
 
 print("LOADED")
